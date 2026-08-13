@@ -1,0 +1,10 @@
+{
+  "name": "Agile Default",
+  "grid": [
+    ["New feature",              "Rework",                    "Core modification",             "UI modification",           "Database Queries"],
+    ["API modification",         "Country specific",          "Migration needed",              "Merge needed",              "Refactor needed"],
+    ["Inadequate specification", "Complex task",  "¯\\_(ツ)_/¯",                  "Cross-team collaboration",  "Inadequate documentation"],
+    ["New unit tests",           "Rewrite unit tests",        "New test cases",                "Sandbox test required",     "Not testable locally"],
+    ["Outside domain area",      "Monetary operation",        "External component dependency", "Nuget update needed",       "No test data available"]
+  ]
+}

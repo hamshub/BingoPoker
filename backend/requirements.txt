@@ -1,0 +1,13 @@
+# BingoPoker Backend Dependencies
+# Python 3.8+
+
+# Web Framework & Async
+aiohttp>=3.9.0
+aiofiles>=23.2.0
+
+# Environment Configuration
+python-dotenv>=1.0.0
+
+# Testing & Development (install separately with: pip install -r requirements-dev.txt)
+# pytest
+# pytest-aiohttp

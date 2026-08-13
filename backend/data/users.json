@@ -1,0 +1,27 @@
+{
+  "marcell@test.com": {
+    "email": "marcell@test.com",
+    "username": "Marcell",
+    "role": "worker"
+  },
+  "Tuib@a.com": {
+    "email": "Tuib@a.com",
+    "username": "Tata",
+    "role": "worker"
+  },
+  "Po@po.com": {
+    "email": "Po@po.com",
+    "username": "Papatata",
+    "role": "observer"
+  },
+  "krust@sko.com": {
+    "email": "krust@sko.com",
+    "username": "Krasz",
+    "role": "worker"
+  },
+  "krisz@po.com": {
+    "email": "krisz@po.com",
+    "username": "Krisztusz",
+    "role": "observer"
+  }
+}

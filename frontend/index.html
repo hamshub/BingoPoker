@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BingoPoker - Agile Planning Tool</title>
+    <link rel="stylesheet" href="/css/styles.css?v=20260813">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <!-- Loading spinner -->
+    <div id="loadingSpinner" class="spinner hidden">
+        <div class="spinner-content">
+            <div class="loader"></div>
+            <p>Loading...</p>
+        </div>
+    </div>
+
+    <!-- Login Modal (overlay — shown when not authenticated) -->
+    <div id="loginModal" class="modal-overlay hidden">
+        <div class="modal-card">
+            <h1>BingoPoker</h1>
+            <p class="tagline">Agile Planning with Bingo Cards</p>
+
+            <form id="registerForm" class="form">
+                <div class="form-group">
+                    <label for="emailInput">Email</label>
+                    <input type="email" id="emailInput" placeholder="your@email.com" required>
+                </div>
+                <div class="form-group">
+                    <label for="usernameInput">Username</label>
+                    <input type="text" id="usernameInput" placeholder="Your name" maxlength="50" required>
+                </div>
+                <div class="form-group">
+                    <label for="roleInput">Role</label>
+                    <select id="roleInput">
+                        <option value="worker">Worker</option>
+                        <option value="observer">Observer</option>
+                    </select>
+                </div>
+                <button type="submit" class="btn btn-primary btn-large">Join BingoPoker</button>
+            </form>
+
+            <div id="registerError" class="error-message hidden"></div>
+
+            <div id="devTools" class="dev-tools hidden">
+                <button type="button" class="btn btn-small btn-secondary" onclick="debugDeleteUsers()">Delete all users</button>
+                <button type="button" class="btn btn-small btn-secondary" onclick="debugDeleteRooms()">Delete all rooms</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main container -->
+    <div id="app" class="app-container">
+
+        <!-- ======== SCREEN 2: Room Selection ======== -->
+        <screen id="roomSelectScreen" class="screen">
+            <div class="screen-content">
+                <div class="header">
+                    <div class="header-left">
+                        <h1>BingoPoker</h1>
+                    </div>
+                    <div class="header-right">
+                        <span id="currentUserDisplay" class="user-badge"></span>
+                        <button id="logoutBtn" class="btn btn-small">Logout</button>
+                    </div>
+                </div>
+                
+                <div class="container">
+                    <!-- Active Rooms Section -->
+                    <div class="card card-full">
+                        <h2>Active Rooms</h2>
+                        <div id="roomsList" class="rooms-grid">
+                            <div class="loading">Loading rooms...</div>
+                        </div>
+                    </div>
+
+                    <!-- Create Room Section -->
+                    <div class="card card-full">
+                        <h2>Create New Room</h2>
+                        <form id="createRoomForm" class="form">
+                            <div class="form-group">
+                                <label for="roomNameInput">Room Name</label>
+                                <input 
+                                    type="text" 
+                                    id="roomNameInput" 
+                                    placeholder="e.g., Sprint 42 Planning" 
+                                    maxlength="100"
+                                    required
+                                >
+                            </div>
+                            
+                            <div class="form-group">
+                                <label>Bingo Grid Template</label>
+                                <div class="template-buttons">
+                                    <button type="button" class="btn btn-small" onclick="useDefaultTemplate()">
+                                        Use Default
+                                    </button>
+                                    <button type="button" class="btn btn-small" onclick="useEmptyTemplate()">
+                                        Custom Grid
+                                    </button>
+                                    <button type="button" class="btn btn-small" onclick="importGridJSON()">
+                                        Import JSON
+                                    </button>
+                                </div>
+                                <input type="file" id="gridFileInput" accept=".json" style="display:none" onchange="handleGridFileImport(event)">
+                            </div>
+                            
+                            <!-- Grid input section (initially hidden) -->
+                            <div id="gridInputSection" class="hidden">
+                                <label>Edit Grid Cells (5x5)</label>
+                                <div id="gridEditor" class="grid-editor"></div>
+                            </div>
+                            
+                            <button type="submit" class="btn btn-primary">Create Room</button>
+                        </form>
+                        
+                        <div id="createRoomError" class="error-message hidden"></div>
+                    </div>
+                </div>
+            </div>
+        </screen>
+
+        <!-- ======== SCREEN 3: Game Interface ======== -->
+        <screen id="gameScreen" class="screen">
+            <div class="screen-content">
+                <div class="game-header">
+                    <div class="header-left">
+                        <span class="game-logo">BingoPoker</span>
+                        <div class="room-meta">
+                            <h2 id="roomTitle">Room</h2>
+                            <span id="roomIdDisplay"></span>
+                        </div>
+                    </div>
+                    <div class="header-right">
+                        <span id="gameUserDisplay" class="user-badge"></span>
+                        <button id="leaveRoomBtn" class="btn btn-small">Leave Room</button>
+                    </div>
+                </div>
+                
+                <div class="game-container">
+                    <!-- Left: Bingo Grid -->
+                    <div class="game-section game-grid-section">
+                        <h3>Bingo Card</h3>
+                        <div id="bingoGrid" class="bingo-grid">
+                            <!-- 5x5 grid generated by JS -->
+                        </div>
+                    </div>
+                    
+                    <!-- Right: Controls and Users -->
+                    <div class="game-section game-control-section">
+                        <!-- Round Controls -->
+                        <div class="control-card">
+                            <h3>Round Controls</h3>
+                            <div class="button-group">
+                                <button id="revealBtn" class="btn btn-primary">Reveal All</button>
+                                <button id="resetBtn" class="btn btn-secondary">Reset Round</button>
+                            </div>
+                        </div>
+
+                        <!-- Active Users -->
+                        <div class="control-card">
+                            <h3>Participants (<span id="userCount">0</span>)</h3>
+                            <div id="usersList" class="users-list">
+                                <!-- Users shown here -->
+                            </div>
+                        </div>
+
+                        <!-- Poker Selection -->
+                        <div class="control-card">
+                            <h3>Your Estimate</h3>
+                            <div id="pokerValues" class="poker-values">
+                                <!-- Buttons: 0, 1, 2, 3, 5, 8, 13, 21, split -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </screen>
+
+    </div>
+
+    <!-- Scripts -->
+    <script src="/js/api.js?v=20260813"></script>
+    <script src="/js/app.js?v=20260813"></script>
+</body>
+</html>

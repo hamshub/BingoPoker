@@ -1,0 +1,740 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap');
+
+/* BingoPoker - Stylesheet */
+
+:root {
+    --primary:        #057FA8;
+    --primary-dark:   #045e7c;
+    --primary-light:  #0aa8d8;
+    --success:        #22c55e;
+    --warning:        #f59e0b;
+    --danger:         #ef4444;
+
+    --bg:             #111d2a;
+    --surface:        #28333F;
+    --surface-raised: #172434;
+    --surface-high:   #1d2e40;
+    --border:         #1e3348;
+
+    --text:           #c8dae8;
+    --text-muted:     #6e8fa8;
+    --text-subtle:    #3d5a70;
+
+    --radius: 8px;
+    --shadow-sm: 0 1px 3px rgba(0,0,0,0.4);
+    --shadow-md: 0 4px 12px rgba(0,0,0,0.45);
+    --shadow-lg: 0 10px 28px rgba(0,0,0,0.55);
+    --transition: all 0.2s ease;
+}
+
+/* ===== Base ===== */
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html {
+    font-size: 16px;
+    height: 100%;
+}
+
+body {
+    height: 100%;
+}
+
+body {
+    font-family: 'Outfit', system-ui, sans-serif;
+    background: var(--surface);
+    color: var(--text);
+    line-height: 1.5;
+}
+
+/* ===== App Container ===== */
+
+.app-container {
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+/* ===== Screen Management ===== */
+
+.screen {
+    display: none;
+    flex: 1;
+    width: 100%;
+}
+
+.screen.active {
+    display: flex;
+    min-height: 0;
+}
+
+.screen-content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    padding: 0 20px 20px;
+    min-height: 0;
+}
+
+#gameScreen .screen-content {
+    overflow: hidden;
+}
+
+#roomSelectScreen .screen-content {
+    overflow-y: auto;
+}
+
+/* ===== Loading Spinner ===== */
+
+.spinner {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.75);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+}
+
+.spinner.hidden { display: none; }
+
+.spinner-content { text-align: center; color: var(--text); }
+
+.loader {
+    border: 4px solid rgba(255,255,255,0.1);
+    border-top: 4px solid var(--primary);
+    border-radius: 50%;
+    width: 40px;
+    height: 40px;
+    animation: spin 1s linear infinite;
+    margin: 0 auto 16px;
+}
+
+@keyframes spin {
+    0%   { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+/* ===== Login Modal ===== */
+
+.modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(8, 16, 25, 0.8);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 500;
+    padding: 20px;
+}
+
+.modal-overlay.hidden { display: none; }
+
+.modal-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 40px;
+    box-shadow: var(--shadow-lg);
+    width: 100%;
+    max-width: 440px;
+}
+
+.modal-card h1 {
+    text-align: center;
+    font-size: 32px;
+    font-weight: 700;
+    color: var(--primary);
+    margin-bottom: 6px;
+    letter-spacing: -0.5px;
+}
+
+.tagline {
+    text-align: center;
+    color: var(--text-muted);
+    margin-bottom: 30px;
+    font-size: 14px;
+}
+
+.dev-tools {
+    margin-top: 24px;
+    padding-top: 18px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    gap: 10px;
+}
+
+/* ===== Header ===== */
+
+.header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: var(--bg);
+    margin: 0 -20px 24px;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+}
+
+.header-left h1 {
+    font-size: 30px;
+    font-weight: 700;
+    color: var(--primary-light);
+    letter-spacing: -0.5px;
+}
+
+.header-right {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+}
+
+/* ===== Game Header ===== */
+.game-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: var(--bg);
+    margin: 0 -20px 16px;
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+}
+
+.game-header .header-left {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+}
+
+.game-logo {
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--primary-light);
+    letter-spacing: -0.5px;
+    padding-right: 16px;
+    border-right: 1px solid var(--border);
+}
+
+.room-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.game-header h2 {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text);
+}
+
+.room-link {
+    font-size: 12px;
+    color: var(--text-muted);
+    cursor: pointer;
+    text-decoration: underline;
+    text-decoration-style: dashed;
+    text-underline-offset: 3px;
+    transition: color 0.15s;
+    user-select: none;
+}
+
+.room-link:hover {
+    color: var(--primary-light);
+}
+
+/* ===== Cards ===== */
+
+.card {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 28px;
+    max-width: 500px;
+    margin: 0 auto;
+    box-shadow: var(--shadow-md);
+}
+
+.card-full {
+    max-width: 100%;
+    margin: 16px 0;
+}
+
+.card h2 {
+    font-size: 17px;
+    font-weight: 600;
+    margin-bottom: 18px;
+    color: var(--text);
+}
+
+.card h3 {
+    font-size: 11px;
+    font-weight: 600;
+    margin-bottom: 10px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+}
+
+/* ===== Forms ===== */
+
+.form {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+}
+
+.form-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.form-group label {
+    font-weight: 500;
+    color: var(--text-muted);
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.form-group input,
+.form-group select {
+    padding: 11px 14px;
+    background: #ffffff;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    font-size: 14px;
+    color: #1a2a38;
+    font-family: inherit;
+    transition: var(--transition);
+}
+
+.form-group input::placeholder {
+    color: #9ab0c0;
+}
+
+.form-group select option {
+    background: #ffffff;
+    color: #1a2a38;
+}
+
+.form-group input:focus,
+.form-group select:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(5, 127, 168, 0.15);
+}
+
+/* ===== Buttons ===== */
+
+.btn {
+    padding: 10px 20px;
+    border: none;
+    border-radius: var(--radius);
+    font-size: 14px;
+    font-weight: 500;
+    font-family: inherit;
+    cursor: pointer;
+    transition: var(--transition);
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+}
+
+.btn:hover {
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-md);
+}
+
+.btn:active { transform: translateY(0); }
+
+.btn-primary {
+    background: var(--primary);
+    color: white;
+}
+
+.btn-primary:hover {
+    background: var(--primary-light);
+}
+
+.btn-secondary {
+    background: var(--surface-raised);
+    color: var(--text);
+    border: 1px solid var(--border);
+}
+
+.btn-secondary:hover {
+    background: var(--surface-high);
+    border-color: var(--primary);
+}
+
+.btn-small {
+    padding: 6px 12px;
+    font-size: 12px;
+}
+
+.btn-large {
+    padding: 13px 28px;
+    font-size: 15px;
+    width: 100%;
+}
+
+.button-group {
+    display: flex;
+    gap: 10px;
+}
+
+.template-buttons {
+    display: flex;
+    gap: 10px;
+}
+
+/* ===== Errors ===== */
+
+.error-message {
+    padding: 11px 14px;
+    background: rgba(239, 68, 68, 0.1);
+    color: #f87171;
+    border-radius: var(--radius);
+    font-size: 13px;
+    border-left: 3px solid var(--danger);
+}
+
+.error-message.hidden { display: none; }
+
+/* ===== Container ===== */
+
+.container {
+    width: 100%;
+    max-width: 1200px;
+    margin: 0 auto;
+    flex: 1;
+    padding: 4px 0;
+}
+
+/* ===== User Badge ===== */
+
+.user-badge {
+    padding: 6px 14px;
+    background: var(--surface-high);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+/* ===== Rooms Grid ===== */
+
+.rooms-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 14px;
+    align-items: flex-start;
+    justify-content: center;
+}
+
+.room-card {
+    flex: 0 0 260px;
+    background: var(--surface-raised);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+    box-shadow: var(--shadow-sm);
+    cursor: pointer;
+    transition: var(--transition);
+}
+
+.room-card:hover {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 1px var(--primary), var(--shadow-md);
+    transform: translateY(-2px);
+}
+
+.room-card h3 {
+    color: var(--text);
+    font-size: 15px;
+    font-weight: 600;
+    margin-bottom: 8px;
+    text-transform: none;
+    letter-spacing: 0;
+}
+
+.room-card-info {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-bottom: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.room-card-button { width: 100%; }
+
+.loading {
+    text-align: center;
+    color: var(--text-muted);
+    padding: 40px 20px;
+    font-size: 14px;
+}
+
+/* ===== Bingo Grid ===== */
+
+.bingo-grid {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    grid-template-rows: repeat(5, 1fr);
+    gap: 6px;
+    background: linear-gradient(160deg, var(--surface-high), var(--bg));
+    padding: 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    flex: 1;
+    min-height: 0;
+    aspect-ratio: 1;
+}
+
+.bingo-cell {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    font-size: 1.8vmin;
+    font-weight: 500;
+    line-height: 1.25;
+    cursor: pointer;
+    transition: var(--transition);
+    background: var(--surface-high);
+    color: var(--text);
+    overflow: hidden;
+    min-width: 0;
+    min-height: 0;
+    position: relative;
+}
+
+.bingo-cell:hover {
+    border-color: var(--primary);
+    color: var(--text);
+    background: var(--surface-high);
+}
+
+.bingo-cell.selected {
+    background: var(--primary);
+    color: white;
+    border-color: var(--primary-dark);
+}
+
+.bingo-cell.center {
+    color: var(--primary-light);
+}
+
+/* ===== Poker Values ===== */
+
+.poker-values {
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 6px;
+}
+
+.poker-btn {
+    flex: 1;
+    padding: 18px 4px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface-raised);
+    color: var(--text);
+    cursor: pointer;
+    font-family: inherit;
+    font-weight: 600;
+    font-size: 13px;
+    transition: var(--transition);
+}
+
+.poker-btn:hover {
+    border-color: var(--primary);
+    background: var(--surface-high);
+}
+
+.poker-btn.active {
+    background: var(--primary);
+    color: white;
+    border-color: var(--primary-dark);
+}
+
+/* ===== Users List ===== */
+
+.users-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.user-item {
+    padding: 9px 12px;
+    background: var(--surface-raised);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 13px;
+}
+
+.user-color {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.user-name {
+    flex: 1;
+    color: var(--text);
+}
+
+.user-status {
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+/* ===== Game Layout ===== */
+
+.game-container {
+    display: flex;
+    justify-content: center;
+    align-items: stretch;
+    gap: 16px;
+    flex: 1;
+    min-height: 0;
+}
+
+.game-section {
+    background: var(--surface-raised);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.game-grid-section h3,
+.game-control-section h3 {
+    margin-bottom: 12px;
+    color: var(--text-muted);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.game-grid-section {
+    flex: 0 1 auto;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.game-control-section {
+    flex: 0 0 300px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    overflow-y: auto;
+}
+
+.control-card {
+    padding: 14px;
+    background: var(--bg);
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+}
+
+.control-card h3 {
+    margin-bottom: 10px;
+}
+
+/* ===== Grid Editor ===== */
+
+.grid-editor {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 6px;
+    margin-bottom: 16px;
+}
+
+.grid-editor-cell input {
+    width: 100%;
+    padding: 7px;
+    background: #ffffff;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 11px;
+    color: #1a2a38;
+    font-family: inherit;
+}
+
+.grid-editor-cell input:focus {
+    outline: none;
+    border-color: var(--primary);
+}
+
+/* ===== Bingo User Dots ===== */
+
+.bingo-cell.frozen {
+    cursor: not-allowed;
+    opacity: 0.85;
+}
+
+.bingo-cell .cell-user-dots {
+    position: absolute;
+    bottom: 3px;
+    right: 3px;
+    display: flex;
+    flex-wrap: wrap-reverse;
+    gap: 2px;
+    justify-content: flex-end;
+    max-width: 80%;
+}
+
+.cell-user-dot {
+    width: 13px;
+    height: 13px;
+    border-radius: 50%;
+    border: 1.5px solid rgba(0, 0, 0, 0.4);
+    flex-shrink: 0;
+}
+
+.poker-btn.frozen {
+    cursor: not-allowed;
+    opacity: 0.5;
+}
+
+/* ===== Role Badge ===== */
+
+.role-badge {
+    font-size: 10px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: rgba(5, 127, 168, 0.15);
+    color: var(--primary-light);
+    border: 1px solid rgba(5, 127, 168, 0.3);
+    font-weight: 600;
+    margin-left: 4px;
+    vertical-align: middle;
+}
+
+/* ===== Hidden ===== */
+
+.hidden { display: none !important; }
+
+/* ===== Responsive ===== */
