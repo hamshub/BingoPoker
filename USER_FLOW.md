@@ -28,8 +28,8 @@ User enters email, username, and role
 User clicks "Join BingoPoker"
         ↓
 [CLIENT] Validate inputs
-        ├─ Email must be valid format
-        └─ Username must be 1-50 characters
+        ├─ Both fields must be non-empty (email format enforced by the input type)
+        └─ Username input is capped at 50 characters
         ↓
 If validation fails:
         └─ Show error message, stay on form
@@ -38,22 +38,26 @@ If validation passes:
         ↓
 [CLIENT] Request: POST /api/user
         ├─ Body: { email, username, role }
-        └─ Returns: { user: { email, username, role }, is_new: bool }
+        └─ Returns: { user: { user_id, email, username, role }, is_new: bool }
         ↓
 [SERVER] Check if user exists
         ├─ If exists: Return existing profile (role from request is ignored)
-        └─ If new: Save to users.json, return new profile
+        └─ If new: Generate a random user ID, store the hashed email in users.json,
+           and return the new profile
         ↓
 [CLIENT] Receive response
-        ├─ Save to localStorage: { email, username, role }
-        ├─ Set app state: currentUser = { email, username, role }
+        ├─ Save to localStorage under 'bingopoker_user': { user_id, email, username, role }
+        ├─ Set app state: currentUser = the returned profile
         └─ Hide login modal
         ↓
 Room list screen is now interactive
         ├─ Active rooms list (top)
-        ├─ Create New Room form (bottom)
+        ├─ Create New Room form (middle)
+        ├─ Informational block about the app (bottom)
         └─ Display current username in header badge
 ```
+
+**Note**: There is no password. The email is never stored in plain text — the server keeps only an HMAC digest of it, keyed by a random user ID.
 
 **Note**: A per-session **color** is not assigned or stored at registration — it is assigned by the server only when the user joins a specific room (see Flow 4), and is never persisted to `users.json`.
 
@@ -74,20 +78,24 @@ User visits http://localhost:8081
         ↓
 [CLIENT] Check localStorage for 'bingopoker_user'
         ↓
-Data found: { email, username, role }
+Data found: { user_id, email, username, role }
         ↓
-App trusts the cached profile and skips the login modal entirely
+App uses the cached profile and skips the login modal entirely
+        ↓
+If the cached profile has no user_id (saved before user IDs existed):
+        └─ Refresh it from GET /api/user/{email} and re-save to localStorage
         ↓
 Load directly to room list screen
         ├─ Show saved username in header badge
         └─ If a room ID is present in the URL (?r=...) or was pending from a shared link, auto-join that room
 ```
 
-**Note**: There is currently no server-side re-validation call (e.g. `GET /api/user/{email}`) on return visits — the cached `localStorage` profile is used as-is until the user logs out.
+**Note**: Beyond the one-time `user_id` backfill above, the cached `localStorage` profile is used as-is until the user logs out.
 
 ### UI Components
 - User badge in header showing username
-- "Logout" button (clears `localStorage`, closes any WebSocket, shows the login modal again — no confirmation prompt)
+- Role toggle button (Worker / Observer) — swapping persists via `PUT /api/user/{email}`
+- "Logout" button (clears `localStorage`, closes any WebSocket, resets the URL to `/`, shows the login modal again — no confirmation prompt)
 
 ---
 
@@ -104,15 +112,16 @@ User fills the "Create New Room" form (no modal — it's inline on the room list
         ↓
 User enters room name
         ↓
-If "Custom Grid" or "Import JSON" chosen, user fills/reviews 25 bingo card cells
-        ├─ Each cell: up to 50 characters
-        └─ The center cell (2,2) has no special rule — it's a normal editable cell, just styled with a different text color in the UI
+If "Custom Grid" or "Import JSON" chosen, the 5×5 grid editor appears and the user fills/reviews 25 cells
+        ├─ Each cell: up to 50 characters; empty cells fall back to "Cell {row}-{col}"
+        ├─ "Import JSON" accepts either a bare 5×5 array or an object with a "grid" key
+        └─ The center cell (2,2) has no special rule — it's a normal editable cell, just styled differently in the game view
         ↓
 User clicks "Create Room"
         ↓
 [CLIENT] Validate inputs
-        ├─ Room name: non-empty, ≤100 chars
-        └─ Grid: exactly 5×5
+        ├─ Room name: non-empty
+        └─ Imported grid: must be exactly 5×5
         ↓
 If validation fails:
         └─ Show error, stay on form
@@ -125,32 +134,37 @@ If validation passes:
         │     created_by: "email",
         │     grid: [[...], [...], [...], [...], [...]]
         │   }
-        └─ Returns: { room_id: "room-abc123", message: "Room created successfully" }
+        └─ Returns: { room_id: "room-abc123XY", message: "Room created successfully" }
         ↓
-[SERVER] Generate room_id
+[SERVER] Validate name/grid, resolve creator email to a user ID
         ├─ Reject with 409 if a room with the same name already exists
-        ├─ Save to rooms.json
-        └─ Create in-memory room state
+        ├─ Reject with 404 if the creator is not a registered user
+        ├─ Generate room_id and save to rooms.json (created_by stores the user ID)
+        └─ Create empty in-memory session state
         ↓
 [CLIENT] Receive response
-        ├─ Navigate to room view
+        ├─ Reload the rooms list
+        ├─ Auto-join the new room
         └─ Connect WebSocket to /ws/{room_id}/{email}
         ↓
 Room screen loads with:
         ├─ Bingo card grid (25 cells)
         ├─ Room name and copyable invite link (built client-side from location.origin + ?r={room_id})
+        ├─ "Download Config" button that exports the grid as JSON in the same shape the import accepts
         ├─ Current user info (username, session color — assigned on join, see Flow 4)
-        ├─ Poker card selector (0, 1, 2, 3, 5, 8, 13, 21, Split)
-        ├─ Reveal button (ENABLED)
-        └─ Reset button (DISABLED)
+        ├─ Poker card selector (0, 1, 2, 3, 5, 8, 13, 21, split)
+        ├─ Reveal All button (ENABLED)
+        └─ Reset Round button (DISABLED)
 ```
 
 ### UI Components
 - Inline "Create New Room" form on the room list screen (not a modal)
-- Text input for room name
+- Text input for room name (max 100 characters)
 - Template buttons: Use Default / Custom Grid / Import JSON
+- Hidden file input for JSON import
 - 5×5 grid editor with text inputs (only shown for Custom Grid / Import JSON)
 - Click-to-copy invite link display
+- "Remove" button on room cards the current user created (compares `user_id` against the room's `created_by`); confirms before calling `DELETE /api/room/{room_id}`
 
 ---
 
@@ -208,16 +222,14 @@ If room found:
         ↓
 Success: Show room screen
 ```
-```
 
 ### UI Components
 - Room screen with:
-  - Room name and ID at top
-  - 5×5 Bingo grid (ready to click)
-  - User list (with colors) on side panel
-  - Poker selector (buttons or cards)
-  - Reveal and Reset buttons
-  - Status bar (Connected/Disconnected)
+  - Game header: room name, copyable invite link, "Download Config" button, username badge with session color dot, and "Leave Room" button
+  - 5×5 Bingo grid (ready to click) on the left
+  - Round Controls (Reveal All / Reset Round) on the right
+  - Participant list with colors, role badges, and vote status
+  - Poker value buttons (0, 1, 2, 3, 5, 8, 13, 21, split)
 
 ---
 
@@ -280,8 +292,8 @@ Cell now displays:
 ```
 User is viewing the room
         ↓
-User clicks on a poker value button/card
-        ├─ Options: 0, 1, 2, 3, 5, 8, 13, 21, Split
+User clicks on a poker value button
+        ├─ Options: 0, 1, 2, 3, 5, 8, 13, 21, split
         ↓
 [CLIENT] Check if revealed
         ├─ If revealed: Don't allow change
@@ -303,21 +315,21 @@ If user previously selected a value:
         └─ (payload does NOT include the value — only that a selection was made)
         ↓
 [CLIENT] All clients receive "poker_updated"
-        ├─ Update local state
-        ├─ Show indicator: "Estimate received from {username}"
+        ├─ Re-render the participant list
+        ├─ Show that user's status as "ready"
         └─ Do NOT show the actual value (hidden until reveal)
         ↓
 Poker selector shows:
         ├─ User's own selection highlighted
-        ├─ Other users' values hidden (just show "Vote pending")
+        ├─ Other users' values hidden ("ready" or "waiting" only)
         └─ All buttons remain clickable until reveal
 ```
 
 ### UI Components
-- Poker value selector (cards or buttons layout)
-- 9 buttons: "0", "1", "2", "3", "5", "8", "13", "21", "Split"
+- Poker value button row
+- 9 buttons: "0", "1", "2", "3", "5", "8", "13", "21", "split"
 - Selected state: highlighted/active styling
-- Vote status indicator showing which users have voted
+- Participant list showing "ready" / "waiting" per user
 
 ---
 
@@ -328,7 +340,7 @@ Poker selector shows:
 ```
 User is viewing the room (before reveal)
         ↓
-User clicks "Reveal" button
+User clicks "Reveal All" button
         ├─ Button is ENABLED before reveal
         └─ Button is DISABLED after reveal
         ↓
@@ -336,44 +348,35 @@ User clicks "Reveal" button
         └─ payload: {} (no fields — user identified by connection)
         ↓
 [SERVER] Receive "reveal"
-        ├─ Set room state: revealed = true
+        ├─ Set session: revealed = true
         ├─ Collect all selections:
         │   ├─ Bingo selections: { email: [[row, col], ...] }
         │   └─ Poker selections: { email: "value" }
         └─ Broadcast "revealed" message with all selections
         ↓
 [CLIENT] All clients receive "revealed"
-        ├─ Update room state: revealed = true
-        ├─ Update UI:
-        │   ├─ Disable poker selector (can't change)
-        │   ├─ Disable bingo selection (can't click cells)
-        │   ├─ Disable "Reveal" button
-        │   ├─ Enable "Reset" button
-        │   └─ Show all selections with usernames
+        ├─ Update session state: revealed = true
+        └─ Update UI:
+            ├─ Freeze the poker buttons (disabled)
+            ├─ Freeze the bingo grid (cells no longer clickable)
+            ├─ Disable "Reveal All" button
+            ├─ Enable "Reset Round" button
+            └─ Show every participant's value
         ↓
 Display after reveal:
-        ├─ Bingo card: All colored circles visible (multiple if overlapped)
-        ├─ Center area: List of all poker selections
-        │   ├─ Format: "{Username}: {Value}" with color coding
-        │   ├─ Sort by value (0→21 then Split)
-        │   └─ Show user's assigned color next to name
-        └─ Analysis (optional):
-            ├─ Highest estimate
-            ├─ Lowest estimate
-            └─ Count of "Split" votes
+        ├─ Bingo card: every participant's colored dots visible, including workers'
+        ├─ Participant list: each user's poker value next to their name and color
+        └─ Summary below the participant list:
+            ├─ Average of the numeric votes (0–21), one decimal place
+            └─ Count of "split" votes, when any were cast
 ```
 
 ### UI Components
-- "Reveal" button: ENABLED before reveal, DISABLED after
-- "Reset" button: DISABLED before reveal, ENABLED after
-- Poker results display:
-  - Each user's value with:
-    - Username
-    - Value
-    - User's color indicator
-  - Sorted/grouped by value
-- Bingo grid with all colored circles visible
-- Connection status indicator
+- "Reveal All" button: ENABLED before reveal, DISABLED after
+- "Reset Round" button: DISABLED before reveal, ENABLED after
+- Participant list entries showing username, role badge, color dot, and revealed value
+- Average / split summary block
+- Bingo grid with all colored dots visible and cells frozen
 
 ---
 
@@ -384,7 +387,7 @@ Display after reveal:
 ```
 User is viewing the room (after reveal)
         ↓
-User clicks "Reset" button
+User clicks "Reset Round" button
         ├─ Button is DISABLED before reveal
         └─ Button is ENABLED after reveal
         ↓
@@ -404,22 +407,20 @@ User clicks "Reset" button
         │   ├─ All poker selections removed
         │   └─ Reset button disabled, Reveal button enabled
         └─ Re-render UI:
-            ├─ Clear colored circles from bingo grid
-            ├─ Clear poker selections (deselect all buttons)
-            ├─ Clear poker results display
-            ├─ Disable "Reset" button
-            └─ Enable "Reveal" button
+            ├─ Clear colored dots from bingo grid and unfreeze the cells
+            ├─ Clear poker selections (deselect all buttons) and unfreeze them
+            ├─ Remove the average / split summary
+            ├─ Disable "Reset Round" button
+            └─ Enable "Reveal All" button
         ↓
 Ready for new round:
         ├─ Users can click bingo cells again
         ├─ Users can select poker values again
-        └─ Users can click "Reveal" again (back to Flow 7)
+        └─ Anyone can click "Reveal All" again (back to Flow 7)
 ```
 
 ### UI Components
 - Same as normal round state
-- Smooth transition (clear visuals)
-- Confirmation/success indicator
 
 ---
 
@@ -456,9 +457,7 @@ If room is not revealed:
 ```
 
 ### UI Components
-- Join notification (toast/banner)
-- Updated user list showing new user
-- User's color displayed
+- Participant list updated with the new user, their color, and role badge
 
 ---
 
@@ -478,33 +477,27 @@ User closes tab / disconnects
         └─ Broadcast "user_left" to remaining users in room
         ↓
 [CLIENT] All remaining users receive "user_left"
-        ├─ Remove user from user list display
-        ├─ Remove user's colored circles from bingo grid
-        ├─ Remove user's poker selection from results
-        └─ Show notification: "{Username} left the room"
+        ├─ Remove user from the participant list
+        └─ Their bingo dots and poker status disappear with the next render
         ↓
 Room continues for remaining users:
-        ├─ Selections persist
+        ├─ Remaining users' selections persist
         ├─ Can continue playing
-        └─ User list updates
+        └─ Participant list updates
         ↓
-If user reconnects:
-        ├─ Same user (email) reconnecting?
-        └─ Get their color again, rejoin as same user
+If the same user reconnects:
+        └─ They are added to the session again and receive the NEXT color in the
+           room's rotation, not their previous one
 ```
 
 ### UI Components
-- Notification when user leaves
-- Updated user list
-- Visual feedback (fade/remove user entry)
+- Updated participant list
 
 ---
 
-## Flow 11: Connection Loss & Reconnection
+## Flow 11: Connection Loss
 
-### Scenario: Network disconnect and reconnect
-
-> **Not currently implemented** — there is no automatic reconnection logic. This describes the intended future behavior only.
+### Scenario: Network disconnect
 
 ```
 User has stable connection
@@ -512,19 +505,14 @@ User has stable connection
 Network connection drops
         ↓
 [CLIENT] WebSocket "close" event fires
-        └─ appState.ws is set to null; no status banner or retry is currently shown
+        └─ appState.ws is set to null; no status banner or retry is shown
         ↓
-Today, the user must navigate back into the room (or reload) to reconnect,
+The user must re-enter the room (or reload) to reconnect,
 which re-fetches room state over REST and opens a new WebSocket connection.
 ```
 
-### UI Components (current)
-- None — there is no visible connection-status indicator
-
-### UI Components (future / not yet built)
-- Connection status indicator (top right)
-- Automatic retry with backoff
-- "Reconnect" button on persistent failure
+### UI Components
+- None — there is no visible connection-status indicator and no reconnection logic
 
 ---
 
@@ -533,40 +521,35 @@ which re-fetches room state over REST and opens a new WebSocket connection.
 ### Scenario: User intentionally leaves room or logs out
 
 ```
-User clicks "Leave Room" button
+User clicks "Leave Room" button (or uses the browser Back button)
         ↓
 [CLIENT] Close WebSocket connection
-        ├─ Send disconnect signal to server
-        └─ Clear room-specific data
+        ├─ Clear room-specific state (selections, current room)
+        └─ Reset the URL to "/" via history.pushState
         ↓
-[SERVER] Process disconnect
-        └─ Remove user from room
+[SERVER] Detects the closed socket
+        ├─ Remove user from session
+        └─ Broadcast "user_left" to the remaining users
         ↓
-[CLIENT] Navigate back to room selection screen
+[CLIENT] Navigate back to room selection screen and reload the rooms list
         ├─ User profile remains (localStorage intact)
-        └─ Option to join another room or create new room
+        └─ Option to join another room or create a new one
         ↓
 ---
         ↓
-User clicks "Logout" (optional feature)
+User clicks "Logout" (room selection screen header)
         ↓
-[CLIENT] Confirm action: "Clear profile?"
-        ↓
-If confirmed:
-        ├─ Clear localStorage
-        ├─ Close WebSocket
-        ├─ Navigate to registration screen
-        └─ User starts fresh on next visit
-        ↓
-If cancelled:
-        └─ Return to previous screen
+[CLIENT] No confirmation prompt — immediately:
+        ├─ Close any open WebSocket
+        ├─ Clear localStorage ('bingopoker_user')
+        ├─ Reset the URL to "/"
+        └─ Show the login modal again
 ```
 
 ### UI Components
-- "Leave Room" button (in room view)
-- "Logout" button (in settings/menu)
-- Confirmation dialog
-- Back to main menu
+- "Leave Room" button (game header)
+- "Logout" button (room selection header)
+- Browser Back from a room returns to the room list and closes the socket
 
 ---
 
@@ -578,25 +561,43 @@ If cancelled:
 ```
 User enters: "notanemail"
         ↓
-[CLIENT] Validation fails
+The browser's native email input validation blocks the submit
         ↓
-Show error: "Please enter a valid email address"
+If it reaches the server, POST /api/user returns 400 "Email format is invalid"
+        ↓
+[CLIENT] Show the server message under the login form
 ```
 
 #### 2. Room Not Found
 ```
-User joins: room-invalid123
+User opens a link for a deleted or unknown room
         ↓
-[SERVER] Room not in rooms.json
+[SERVER] GET /api/room/{room_id} returns 404 (or 400 for a malformed ID)
         ↓
-[CLIENT] Show error: "Room not found. Check the room ID and try again."
+[CLIENT] alert("Failed to join room: Room {room_id} not found")
         ↓
-Offer options:
-        ├─ Create new room
-        └─ Try another room ID
+User stays on the room selection screen
 ```
 
-#### 3. Color Palette Wraparound
+#### 3. Duplicate Room Name
+```
+User creates a room whose name already exists
+        ↓
+[SERVER] POST /api/room returns 409
+        ↓
+[CLIENT] Show "A room named '{name}' already exists" under the create form
+```
+
+#### 4. Deleting Someone Else's Room
+```
+Only the creator sees the "Remove" button, but the rule is enforced server-side
+        ↓
+[SERVER] DELETE /api/room/{room_id} returns 403 for anyone else
+        ↓
+[CLIENT] alert("Failed to delete room: Only the room creator can delete this room")
+```
+
+#### 5. Color Palette Wraparound
 ```
 More than 10 users join the same room
         ↓
@@ -605,47 +606,38 @@ More than 10 users join the same room
 Two or more users may end up with the same color — there is no hard room capacity limit or "room full" rejection
 ```
 
-#### 4. Network Error
+#### 6. Duplicate Connection (Same User, Same Room)
+```
+The same email opens the room in a second tab
+        ↓
+[SERVER] Sends "replaced" to the first socket and closes it
+        ↓
+[CLIENT] First tab shows: "You joined this room from another tab or window."
+```
+
+#### 7. Network Error
 ```
 User WebSocket disconnects
         ↓
-[CLIENT] Show status: "Disconnected"
+[CLIENT] appState.ws is cleared; no status banner is shown
         ↓
-Auto-retry or manual "Reconnect" button
+The user must re-enter the room or reload the page to reconnect
 ```
 
 ### UI Components
-- Error modals/toasts
-- Error banners with dismiss button
-- Contextual help text
-- Retry options
+- Inline error message blocks under the login and create-room forms
+- `alert()` dialogs for join/delete failures and the "replaced" notice
 
 ---
 
-## Accessibility & Mobile Considerations
+## Developer Tools
 
-### Responsive Design
-- Bingo grid scales for mobile (smaller screens)
-- Poker selector adapts to screen size (horizontal scroll or wrapping)
-- User list collapses to side drawer on mobile
-- Touch-friendly button sizes (min 48px)
+Adding `?dev=true` to the URL reveals the dev-only buttons in the login modal:
+- "Delete all users" → `DELETE /api/debug/users`, then clears `localStorage` and reloads
+- "Delete all rooms" → `DELETE /api/debug/rooms`
 
-### Keyboard Navigation
-- Tab through bingo cells
-- Tab through poker buttons
-- Enter/Space to select
-- Escape to close modals
-
-### Color Accessibility
-- Colored circles supplemented with user initials or small text
-- High contrast between colors
-- Color-blind friendly palette option (future)
-
-### Offline Support (Optional Future)
-- ServiceWorker for offline detection
-- Queue actions if offline
-- Sync when reconnected
+These endpoints exist only when the server runs with `DEBUG=true`.
 
 ---
 
-*Last Updated: 2026-08-12*
+*Last Updated: 2026-08-18*

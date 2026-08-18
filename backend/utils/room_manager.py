@@ -5,16 +5,19 @@ and in-memory session state for active users and selections.
 """
 
 import json
+import logging
 import os
 import secrets
 import string
-from datetime import datetime
-from typing import Optional, Dict, Any, List, Tuple
+from datetime import datetime, timezone
+from typing import Optional, Dict, Any, Tuple
 
 import aiofiles
 
 from .color_palette import ColorPalette
 from .validators import Validators
+
+logger = logging.getLogger(__name__)
 
 
 class RoomManager:
@@ -48,7 +51,7 @@ class RoomManager:
                 self.rooms = {}
                 await self._save_to_disk()
         except Exception as e:
-            print(f"Error loading rooms: {e}")
+            logger.error(f"Error loading rooms: {e}")
             self.rooms = {}
 
     async def create_room(
@@ -63,7 +66,7 @@ class RoomManager:
         Args:
             room_name: Display name for the room
             grid: 5x5 array of cell text strings
-            created_by: Email of user creating the room
+            created_by: Random user ID of the user creating the room
 
         Returns:
             (success: bool, error: str | None, room_data: dict | None)
@@ -85,7 +88,7 @@ class RoomManager:
             "room_id": room_id,
             "name": room_name,
             "config": {"grid": grid},
-            "created_at": datetime.utcnow().isoformat(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
             "created_by": created_by,
         }
 
@@ -337,6 +340,54 @@ class RoomManager:
         """Get all persisted rooms regardless of whether anyone is currently in them."""
         return self.rooms.copy()
 
+    async def migrate_creator_ids(self, resolve_user_id) -> int:
+        """
+        Replace legacy plain-email `created_by` values with random user IDs.
+
+        Rooms whose creator is no longer registered lose their owner, since the
+        email cannot be recovered once hashed.
+
+        Args:
+            resolve_user_id: Callable mapping an email to a user ID or None
+
+        Returns:
+            Number of migrated room records
+        """
+        migrated = 0
+        for room_config in self.rooms.values():
+            created_by = room_config.get("created_by")
+            if not isinstance(created_by, str) or "@" not in created_by:
+                continue
+            room_config["created_by"] = resolve_user_id(created_by)
+            migrated += 1
+
+        if migrated:
+            await self._save_to_disk()
+        return migrated
+
+    async def delete_room(self, room_id: str) -> Tuple[bool, Optional[str]]:
+        """
+        Delete a room and its session state.
+
+        Args:
+            room_id: Room ID to delete
+
+        Returns:
+            (success: bool, error: str | None)
+        """
+        if room_id not in self.rooms:
+            return (False, "Room not found")
+
+        # Remove from persisted rooms
+        del self.rooms[room_id]
+        await self._save_to_disk()
+
+        # Remove session state if it exists
+        if room_id in self.sessions:
+            del self.sessions[room_id]
+
+        return (True, None)
+
     async def _save_to_disk(self) -> None:
         """
         Persist room configurations to rooms.json.
@@ -352,7 +403,7 @@ class RoomManager:
                 content = json.dumps(self.rooms, indent=2)
                 await f.write(content)
         except Exception as e:
-            print(f"Error saving rooms: {e}")
+            logger.error(f"Error saving rooms: {e}")
 
     @staticmethod
     def _generate_room_id() -> str:

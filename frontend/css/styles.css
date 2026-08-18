@@ -167,6 +167,53 @@ body {
     gap: 10px;
 }
 
+/* ===== Info Block ===== */
+
+.info-block {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 28px;
+}
+
+.info-description {
+    font-size: 20px;
+    color: var(--primary);
+    line-height: 1.6;
+    margin-bottom: 16px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--border);
+    font-weight: 500;
+}
+
+.info-section {
+    margin-bottom: 16px;
+}
+
+.info-section:last-child {
+    margin-bottom: 0;
+}
+
+.info-section h4 {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--primary-light);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 8px;
+}
+
+.info-section p {
+    font-size: 13px;
+    color: var(--text);
+    line-height: 1.5;
+    margin-bottom: 10px;
+}
+
+.info-section p:last-child {
+    margin-bottom: 0;
+}
+
 /* ===== Header ===== */
 
 .header {
@@ -190,6 +237,29 @@ body {
     display: flex;
     gap: 12px;
     align-items: center;
+}
+
+.btn-role {
+    position: relative;
+    text-transform: capitalize;
+    min-width: 90px;
+}
+
+.btn-role:hover::before {
+    content: 'Swap roles';
+    position: absolute;
+    bottom: -32px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--text-muted);
+    color: var(--bg);
+    padding: 6px 10px;
+    border-radius: 4px;
+    font-size: 12px;
+    white-space: nowrap;
+    z-index: 10;
+    font-weight: 500;
+    pointer-events: none;
 }
 
 /* ===== Game Header ===== */
@@ -223,6 +293,13 @@ body {
     display: flex;
     flex-direction: column;
     gap: 2px;
+}
+
+.room-meta-footer {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
 }
 
 .game-header h2 {
@@ -374,6 +451,15 @@ body {
     border-color: var(--primary);
 }
 
+.btn-danger {
+    background: var(--danger);
+    color: white;
+}
+
+.btn-danger:hover {
+    background: #dc2626;
+}
+
 .btn-small {
     padding: 6px 12px;
     font-size: 12px;
@@ -476,6 +562,21 @@ body {
 }
 
 .room-card-button { width: 100%; }
+
+.room-card-buttons {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+
+.room-card-button {
+    flex: 1;
+}
+
+.room-card-delete {
+    flex: 0 0 auto;
+    min-width: 60px;
+}
 
 .loading {
     text-align: center;
@@ -707,10 +808,10 @@ body {
 }
 
 .cell-user-dot {
-    width: 13px;
-    height: 13px;
+    width: 26px;
+    height: 26px;
     border-radius: 50%;
-    border: 1.5px solid rgba(0, 0, 0, 0.4);
+    border: 2px solid rgba(0, 0, 0, 0.4);
     flex-shrink: 0;
 }
 

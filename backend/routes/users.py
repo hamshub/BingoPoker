@@ -3,10 +3,13 @@
 Endpoints:
 - POST /api/user - Register or get user
 - GET /api/user/{email} - Get user profile
-- PUT /api/user/{email} - Update username
+- PUT /api/user/{email} - Update username and/or role
 """
 
+import logging
 from aiohttp import web
+
+logger = logging.getLogger(__name__)
 
 
 async def register_user_handler(request: web.Request) -> web.Response:
@@ -14,7 +17,7 @@ async def register_user_handler(request: web.Request) -> web.Response:
     POST /api/user - Register new user or get existing user.
     
     Request body: {"email": "user@example.com", "username": "John"}
-    Response: {"user": {email, username, role}, "is_new": bool}
+    Response: {"user": {user_id, email, username, role}, "is_new": bool}
     """
     try:
         data = await request.json()
@@ -42,6 +45,7 @@ async def register_user_handler(request: web.Request) -> web.Response:
                     {"error": "registration_failed", "message": error},
                     status=400
                 )
+            logger.info(f"New user registered: {user['user_id']} ({username}, role: {role})")
             return web.json_response({
                 "user": user,
                 "is_new": True
@@ -49,6 +53,7 @@ async def register_user_handler(request: web.Request) -> web.Response:
         else:
             # User exists, fetch their profile
             user = await user_manager.get_user(email)
+            logger.info(f"User login: {user['user_id']} ({user.get('username')})")
             return web.json_response({
                 "user": user,
                 "is_new": False
@@ -70,7 +75,7 @@ async def get_user_handler(request: web.Request) -> web.Response:
     """
     GET /api/user/{email} - Get user profile.
     
-    Response: {"user": {email, username, role}}
+    Response: {"user": {user_id, email, username, role}}
     """
     try:
         email = request.match_info.get("email")
@@ -99,21 +104,28 @@ async def get_user_handler(request: web.Request) -> web.Response:
         )
 
 
-async def update_username_handler(request: web.Request) -> web.Response:
+async def update_user_handler(request: web.Request) -> web.Response:
     """
-    PUT /api/user/{email} - Update user username.
+    PUT /api/user/{email} - Update user username or role.
     
-    Request body: {"username": "NewName"}
-    Response: {"user": {email, username, role}}
+    Request body: {"username": "NewName"} or {"role": "worker" or "observer"}
+    Response: {"user": {user_id, email, username, role}}
     """
     try:
         email = request.match_info.get("email")
         data = await request.json()
         new_username = data.get("username")
+        new_role = data.get("role")
         
-        if not email or not new_username:
+        if not email:
             return web.json_response(
-                {"error": "invalid_input", "message": "Email and username required"},
+                {"error": "invalid_input", "message": "Email required"},
+                status=400
+            )
+        
+        if not new_username and not new_role:
+            return web.json_response(
+                {"error": "invalid_input", "message": "Username or role required"},
                 status=400
             )
         
@@ -126,14 +138,23 @@ async def update_username_handler(request: web.Request) -> web.Response:
                 status=404
             )
         
-        # Update username
-        success, error = await user_manager.update_username(email, new_username)
+        # Update username if provided
+        if new_username:
+            success, error = await user_manager.update_username(email, new_username)
+            if not success:
+                return web.json_response(
+                    {"error": "update_failed", "message": error},
+                    status=400
+                )
         
-        if not success:
-            return web.json_response(
-                {"error": "update_failed", "message": error},
-                status=400
-            )
+        # Update role if provided
+        if new_role:
+            success, error = await user_manager.update_role(email, new_role)
+            if not success:
+                return web.json_response(
+                    {"error": "update_failed", "message": error},
+                    status=400
+                )
         
         # Return updated user
         user = await user_manager.get_user(email)
@@ -161,4 +182,4 @@ def setup_user_routes(app: web.Application) -> None:
     """
     app.router.add_post("/api/user", register_user_handler)
     app.router.add_get("/api/user/{email}", get_user_handler)
-    app.router.add_put("/api/user/{email}", update_username_handler)
+    app.router.add_put("/api/user/{email}", update_user_handler)

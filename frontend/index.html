@@ -54,7 +54,7 @@
     <!-- Main container -->
     <div id="app" class="app-container">
 
-        <!-- ======== SCREEN 2: Room Selection ======== -->
+        <!-- ======== Room Selection ======== -->
         <screen id="roomSelectScreen" class="screen">
             <div class="screen-content">
                 <div class="header">
@@ -63,7 +63,8 @@
                     </div>
                     <div class="header-right">
                         <span id="currentUserDisplay" class="user-badge"></span>
-                        <button id="logoutBtn" class="btn btn-small">Logout</button>
+                        <button id="roleSwapBtn" class="btn btn-small btn-role" title="Swap roles"></button>
+                        <button id="logoutBtn" class="btn btn-small btn-danger">Logout</button>
                     </div>
                 </div>
                 
@@ -118,11 +119,35 @@
                         
                         <div id="createRoomError" class="error-message hidden"></div>
                     </div>
+
+                    <!-- Info Block -->
+                    <div class="card card-full info-block">
+                        <p class="info-description">
+                            BingoPoker is an extended Sprint Poker application with helpful insights on possible difficulties regarding any task.
+                        </p>
+
+                        <div class="info-section">
+                            <h4>Room Creation</h4>
+                            <p>Create a room, use the default Bingo configuration, load up a pre-set from a file or create your own with custom cards containing various roadblocks.</p>
+                        </div>
+
+                        <div class="info-section">
+                            <h4>Usage</h4>
+                            <p>When logging in, you can select to be a Worker (ex: Developer, Tester) or an Observer (ex: Product Manager, Product Owner). As a worker, your bingo selection is only revealed to others when the cards are flipped, but an observer's selection is visible to all participants at all times. This helps the workers to better see the scope of the given task.</p>
+                            <p>Select your poker card according to the complexity, or vote 'Split' if too big.</p>
+                            <p>The cards can be revealed by anyone, and all selected bingo cards with the per person estimate and average is visible. Decide on the estimate with the participants and reset the round when done.</p>
+                        </div>
+
+                        <div class="info-section">
+                            <h4>Feedback</h4>
+                            <p>The app is currently in development, bugs may occur and features may be unfinished. For bug reporting and feedback contact Marcell Sárvári.</p>
+                        </div>
+                    </div>
                 </div>
             </div>
         </screen>
 
-        <!-- ======== SCREEN 3: Game Interface ======== -->
+        <!-- ======== Game Interface ======== -->
         <screen id="gameScreen" class="screen">
             <div class="screen-content">
                 <div class="game-header">
@@ -130,7 +155,10 @@
                         <span class="game-logo">BingoPoker</span>
                         <div class="room-meta">
                             <h2 id="roomTitle">Room</h2>
-                            <span id="roomIdDisplay"></span>
+                            <div class="room-meta-footer">
+                                <span id="roomIdDisplay"></span>
+                                <button id="downloadGridBtn" class="btn btn-small btn-secondary" title="Download bingo configuration as JSON">Download Config</button>
+                            </div>
                         </div>
                     </div>
                     <div class="header-right">

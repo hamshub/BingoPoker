@@ -4,40 +4,36 @@
 
 ### Prerequisites
 - Python 3.8+
-- pip (Python package manager)
-- A code editor (VS Code recommended)
-- Modern web browser (Chrome, Firefox, Safari, Edge)
+- pip
+- A modern browser (Chrome, Firefox, Safari, Edge)
 
-### Setup (5 minutes)
+### Setup
 
 ```bash
-# 1. Navigate to project directory
+# 1. Open the project
 cd /path/to/BingoPoker
 
-# 2. Create virtual environment
+# 2. Create and activate a virtual environment
 python -m venv venv
+venv\Scripts\activate          # Windows
+source venv/bin/activate       # macOS/Linux
 
-# 3. Activate virtual environment
-# On Windows:
-venv\Scripts\activate
-# On macOS/Linux:
-source venv/bin/activate
-
-# 4. Install dependencies
+# 3. Install runtime dependencies
 pip install -r backend/requirements.txt
 
-# 5. Run the server
-python backend/app.py
+# 4. Copy the environment template
+copy .env.example .env         # Windows
+cp .env.example .env           # macOS/Linux
 
-# 6. Open browser
-# Navigate to http://localhost:8081
+# 5. Run the server from the backend directory
+cd backend
+python app.py
 ```
 
-Server will output:
-```
-Python demo listening on http://0.0.0.0:8081
-WebSocket endpoint: ws://0.0.0.0:8081/ws
-```
+The server prints `Starting BingoPoker on 0.0.0.0:8081`. Open <http://localhost:8081>.
+
+> Run `python app.py` from `backend/`, not from the repository root — imports such as
+> `from utils.user_manager import UserManager` are resolved relative to that directory.
 
 ---
 
@@ -45,672 +41,271 @@ WebSocket endpoint: ws://0.0.0.0:8081/ws
 
 ```
 BingoPoker/
+├── .env.example                 # Environment template
 ├── README.md                    # Project overview
 ├── ARCHITECTURE.md              # System design
 ├── DATA_STRUCTURES.md           # JSON schemas
 ├── USER_FLOW.md                 # User interactions
 ├── API_SPECIFICATIONS.md        # REST and WebSocket API
+├── CODING_RULES.md              # Conventions
+├── IMPLEMENTATION_TASKS.md      # Implementation status
 ├── DEVELOPMENT.md               # This file
+├── STARTUP.md                   # Run instructions
 │
 ├── backend/
-│   ├── app.py                   # Main application entry point
-│   ├── requirements.txt         # Python dependencies
+│   ├── app.py                   # aiohttp app factory + entry point
+│   ├── requirements.txt         # Runtime dependencies
+│   ├── requirements-dev.txt     # Test dependencies (currently unused)
+│   ├── routes/
+│   │   ├── users.py             # /api/user endpoints
+│   │   ├── rooms.py             # /api/room, /api/rooms endpoints
+│   │   └── debug.py             # /api/debug/* (only mounted when DEBUG=true)
+│   ├── handlers/
+│   │   └── websocket.py         # /ws/{room_id}/{user_email} handler
 │   ├── utils/
-│   │   ├── __init__.py
-│   │   ├── room_manager.py      # Room logic and state
-│   │   ├── user_manager.py      # User registration and caching
-│   │   ├── color_palette.py     # Color assignment logic
+│   │   ├── user_manager.py      # User registration + hashed-email persistence
+│   │   ├── room_manager.py      # Room config persistence + in-memory sessions
+│   │   ├── color_palette.py     # 10-color palette
 │   │   └── validators.py        # Input validation
-│   └── data/
-│       ├── users.json           # User registry (persistent)
-│       └── rooms.json           # Room configs (persistent)
+│   ├── data/
+│   │   ├── users.json           # User registry (persistent)
+│   │   ├── rooms.json           # Room configs (persistent)
+│   │   └── .email_pepper        # Auto-generated HMAC pepper (secret)
+│   ├── logs/
+│   │   └── bingopoker.log       # Application log
+│   └── tests/
+│       └── __init__.py          # Empty — no tests exist yet
 │
-├── frontend/
-│   ├── index.html               # Main HTML (embedded in app.py)
-│   ├── css/
-│   │   └── styles.css           # Application styles
-│   └── js/
-│       ├── app.js               # All UI state, navigation, WS handling
-│       └── api.js               # REST API client + GridUtils constants
-│
-└── tests/
-    ├── __init__.py
-    ├── test_room_manager.py     # Room tests
-    ├── test_user_manager.py     # User tests
-    └── test_api.py              # API endpoint tests
+└── frontend/
+    ├── index.html               # All screens in one document
+    ├── css/styles.css           # All styles, theme via :root variables
+    ├── js/
+    │   ├── api.js               # REST client + GridUtils (default grid, helpers)
+    │   └── app.js               # State, screens, rendering, WebSocket handling
+    └── templates/
+        └── agile-default.json   # Importable grid template
 ```
 
 ---
 
 ## Dependencies
 
-### Backend (`requirements.txt` / `requirements-dev.txt`)
+### Backend runtime (`backend/requirements.txt`)
 
-**Production** (`requirements.txt`):
 ```
 aiohttp>=3.9.0
 aiofiles>=23.2.0
 python-dotenv>=1.0.0
 ```
 
-**Dev/test** (`requirements-dev.txt`):
+- `aiohttp` — async web framework with native WebSocket support
+- `aiofiles` — async file I/O for JSON persistence
+- `python-dotenv` — loads `.env`
+
+### Backend dev/test (`backend/requirements-dev.txt`)
+
 ```
-pytest>=7.4.3
-pytest-aiohttp>=1.3.0
+pytest>=7.4.0
+pytest-aiohttp>=1.1.0
 ```
 
-**Purpose of each**:
-- `aiohttp`: Async web framework with native WebSocket support
-- `aiofiles`: Async file I/O for JSON persistence
-- `python-dotenv`: Load environment variables from `.env`
-- `pytest` / `pytest-aiohttp`: Test framework with async support
+Install separately with `pip install -r backend/requirements-dev.txt`.
+See [Testing](#testing) — these are declared for future use but currently unused.
 
 ### Frontend
-Pure HTML5, CSS3, and JavaScript — no build step, no framework, no npm.
+Pure HTML5, CSS3 and vanilla JavaScript. No build step, no framework, no npm.
 
 ---
 
 ## Configuration
 
-### Environment Variables
+All configuration is read in `backend/app.py` and `backend/utils/user_manager.py`.
+Copy `.env.example` to `.env` and adjust.
 
-Create `.env` file in project root:
+| Variable | Default | Meaning |
+|---|---|---|
+| `HOST` | `0.0.0.0` | Bind address |
+| `PORT` | `8081` | Bind port |
+| `DEBUG` | `False` | When `true`, mounts the debug routes |
+| `DATA_DIR` | `backend/data` | Where `users.json`, `rooms.json` and `.email_pepper` live |
+| `EMAIL_HASH_PEPPER` | *(unset)* | HMAC pepper for email hashing |
 
-```env
-HOST=0.0.0.0
-PORT=8081
-DEBUG=True
-DATA_DIR=data  # relative to backend/app.py; omit to use default (backend/data/)
-```
-
-### Default Values
-
-If `.env` not found, or `DATA_DIR` not set:
-```python
-HOST = "0.0.0.0"
-PORT = 8081
-DEBUG = False
-DATA_DIR = os.path.join(os.path.dirname(__file__), "data")  # always relative to app.py
-```
-
-> **Note**: Relative `DATA_DIR` values are resolved against `app.py`'s directory, not the working directory.
+Notes:
+- `DEBUG` is truthy only for the literal string `true` (case-insensitive).
+- A relative `DATA_DIR` is resolved against `app.py`'s directory, not the working directory.
+- When `EMAIL_HASH_PEPPER` is unset, a random pepper is generated once and stored in
+  `<DATA_DIR>/.email_pepper`. Changing or losing that value orphans every existing user
+  record, because emails are stored only as HMAC-SHA256 digests and cannot be recovered.
 
 ---
 
-## Backend Development
+## Backend Overview
 
-### Main Application (`backend/app.py`)
+Rather than duplicating source here, this section points at the module that owns each concern.
 
-**Structure**:
-```python
-import json
-import os
-from aiohttp import web
-from utils.room_manager import RoomManager
-from utils.user_manager import UserManager
+| Concern | Module |
+|---|---|
+| App factory, logging setup, static file mounts | `backend/app.py` |
+| User registration, hashed-email lookup, role/username updates | `backend/utils/user_manager.py` |
+| Room config persistence, session state, selections, reveal/reset | `backend/utils/room_manager.py` |
+| Per-session color assignment | `backend/utils/color_palette.py` |
+| Input validation | `backend/utils/validators.py` |
+| REST handlers | `backend/routes/users.py`, `backend/routes/rooms.py` |
+| Real-time session handling | `backend/handlers/websocket.py` |
 
-# Global managers
-room_manager = RoomManager()
-user_manager = UserManager()
+Key facts to keep in mind while working in the backend:
 
-# HTTP Handlers
-async def index(request: web.Request) -> web.Response:
-    # Serve HTML
-    pass
-
-async def health(request: web.Request) -> web.Response:
-    # Health check
-    pass
-
-async def register_user(request: web.Request) -> web.Response:
-    # POST /api/user
-    pass
-
-async def get_user(request: web.Request) -> web.Response:
-    # GET /api/user/{email}
-    pass
-
-async def update_user(request: web.Request) -> web.Response:
-    # PUT /api/user/{email}
-    pass
-
-async def create_room(request: web.Request) -> web.Response:
-    # POST /api/room
-    pass
-
-async def get_room(request: web.Request) -> web.Response:
-    # GET /api/room/{room_id}
-    pass
-
-async def list_rooms(request: web.Request) -> web.Response:
-    # GET /api/rooms (optional admin)
-    pass
-
-# WebSocket Handler
-async def websocket_handler(request: web.Request) -> web.WebSocketResponse:
-    # Handle WS connections and messages
-    pass
-
-# Application Factory
-def create_app() -> web.Application:
-    app = web.Application()
-    app.router.add_get("/", index)
-    app.router.add_get("/health", health)
-    app.router.add_post("/api/user", register_user)
-    app.router.add_get("/api/user/{email}", get_user)
-    app.router.add_put("/api/user/{email}", update_user)
-    app.router.add_post("/api/room", create_room)
-    app.router.add_get("/api/room/{room_id}", get_room)
-    app.router.add_get("/api/rooms", list_rooms)
-    app.router.add_get("/ws", websocket_handler)
-    return app
-
-if __name__ == "__main__":
-    web.run_app(create_app(), host=HOST, port=PORT)
-```
-
-### Room Manager (`backend/utils/room_manager.py`)
-
-Manages room state and persistence.
-
-**Key Methods**:
-```python
-class RoomManager:
-    def __init__(self):
-        self.rooms = {}  # In-memory active rooms
-        self.load_all_rooms()
-    
-    def load_all_rooms(self):
-        # Load persisted rooms from rooms.json
-        pass
-    
-    def create_room(self, name, config, creator_email):
-        # Create new room
-        # Returns: room_id
-        pass
-    
-    def load_room(self, room_id):
-        # Load room config from file
-        pass
-    
-    def save_room(self, room_id, config):
-        # Persist room to rooms.json
-        pass
-    
-    def get_room_state(self, room_id):
-        # Get current in-memory state
-        pass
-    
-    def add_user(self, room_id, user):
-        # Add user to room session
-        pass
-    
-    def remove_user(self, room_id, email):
-        # Remove user from room session
-        pass
-    
-    def mark_bingo_cell(self, room_id, email, cell, selected):
-        # Update bingo selection
-        pass
-    
-    def set_poker_value(self, room_id, email, value):
-        # Update poker selection
-        pass
-    
-    def reveal_room(self, room_id):
-        # Reveal all selections
-        pass
-    
-    def reset_room(self, room_id):
-        # Clear selections for new round
-        pass
-    
-    def cleanup_empty_room(self, room_id):
-        # Remove room from memory if empty
-        pass
-```
-
-### User Manager (`backend/utils/user_manager.py`)
-
-Manages user profiles and color assignments.
-
-**Key Methods**:
-```python
-class UserManager:
-    def __init__(self):
-        self.users = {}  # Cached users
-        self.load_all_users()
-    
-    def load_all_users(self):
-        # Load from users.json
-        pass
-    
-    def user_exists(self, email):
-        # Check if user registered
-        pass
-    
-    def register_user(self, email, username):
-        # Create new user with color
-        # Returns: user object
-        pass
-    
-    def get_user(self, email):
-        # Get user by email
-        pass
-    
-    def update_user(self, email, username):
-        # Update username
-        pass
-    
-    def save_users(self):
-        # Persist users to users.json
-        pass
-```
-
-### Color Palette (`backend/utils/color_palette.py`)
-
-```python
-class ColorPalette:
-    COLORS = [
-        "#FF6B6B", "#4ECDC4", "#45B7D1", "#FFA07A",
-        "#98D8C8", "#F7DC6F", "#BB8FCE", "#85C1E2",
-        "#F8B195", "#C7CEEA", "#FF85B3", "#64DDAA",
-        "#FFD23F", "#3D5A80", "#C1666B", "#48A9A6",
-        "#E4C1F9", "#F4A261", "#2A9D8F", "#E76F51"
-    ]
-    
-    @staticmethod
-    def assign_color(room_id, used_colors):
-        # Get next available color for room
-        pass
-    
-    @staticmethod
-    def get_color_by_index(index):
-        # Get color by palette index
-        pass
-```
-
-### Validators (`backend/utils/validators.py`)
-
-```python
-class Validators:
-    @staticmethod
-    def validate_email(email: str) -> bool:
-        pass
-    
-    @staticmethod
-    def validate_username(username: str) -> bool:
-        pass
-    
-    @staticmethod
-    def validate_room_name(name: str) -> bool:
-        pass
-    
-    @staticmethod
-    def validate_grid(grid: list) -> bool:
-        # Check 5x5, center is "FREE"
-        pass
-    
-    @staticmethod
-    def validate_cell_text(text: str) -> bool:
-        pass
-    
-    @staticmethod
-    def validate_cell_index(cell: int) -> bool:
-        pass
-    
-    @staticmethod
-    def validate_poker_value(value: str) -> bool:
-        pass
-```
+- Managers are created in `startup_handler` and stored on the app as
+  `app["user_manager"]` / `app["room_manager"]`.
+- Room configuration is persisted to `rooms.json`; session state (`users`,
+  `bingo_selections`, `poker_selections`, `revealed`, `color_counter`) is in memory only
+  and is lost on restart.
+- `users.json` is keyed by a random `uuid4().hex` user ID and stores an `email_hash`,
+  never the plain email. `rooms.json` stores `created_by` as a user ID.
+- `ColorPalette` exposes a single method, `get_color_by_index(index)`, over a 10-color
+  list. A room's `color_counter` increments monotonically, so colors repeat once more than
+  10 participants have joined that session.
+- Validators return `(is_valid, error_message)`; managers return `(success, error)` or
+  `(success, error, data)`.
+- Grids are always 5×5 strings. The centre cell (2,2) is styled differently but has no
+  special game meaning. Poker values are `0, 1, 2, 3, 5, 8, 13, 21, split`.
+- Usernames are 1–50 characters, room names 1–100 characters, room IDs match
+  `room-XXXXXXXX`. There is no cap on participants per room.
 
 ---
 
-## Frontend Development
+## Frontend Overview
 
-### HTML Structure (`frontend/index.html`)
+`frontend/index.html` contains every screen (login modal, room select, game screen) and
+switches them via the `.screen.active` class.
 
-Should include:
-- User registration form (modal)
-- Room selection screen
-- Room view with:
-  - Bingo card grid (5×5)
-  - User list panel
-  - Poker selector (9 buttons)
-  - Reveal/Reset buttons
-  - Connection status indicator
+`frontend/js/api.js` exposes:
+- `BingoPokerAPI` — static methods wrapping the REST endpoints, each returning
+  `{ success, data }` or `{ success, error }`.
+- `GridUtils` — `DEFAULT_GRID`, `createEmptyGrid()`, `isCenterCell(row, col)`,
+  `isValidGrid(grid)`.
 
-### CSS Styling (`frontend/css/styles.css`)
+`frontend/js/app.js` holds the remaining logic in one module:
+- `appState` — current user, current room, grid, selections, active WebSocket.
+- Auth flow: `checkAuthStatus`, `handleRegister`, `handleLogout`, `handleRoleSwap`.
+  The user profile is cached in `localStorage` under `bingopoker_user`.
+- Room flow: `loadRooms`, `handleCreateRoom`, `joinRoom`, `handleDeleteRoom`,
+  `handleLeaveRoom`, `handleDownloadGrid`.
+- Grid editor: `useDefaultTemplate`, `useEmptyTemplate`, `importGridJSON`,
+  `handleGridFileImport`, `renderGridEditor`.
+- Rendering: `renderBingoGrid`, `renderPokerValues`, `renderUsers`, `renderRoundControls`.
+- WebSocket: `connectWebSocket`, `wsSend`, `handleWsMessage`.
 
-Use CSS variables for theming:
-```css
-:root {
-  --primary: #FF6B6B;
-  --secondary: #4ECDC4;
-  --bg: #f9f7f1;
-  --panel: #fffefa;
-  --ink: #2f2a21;
-}
-```
+Visibility rule implemented in `renderBingoGrid`: an observer's bingo dots are always
+visible to everyone; a worker's dots are visible only to that worker until the round is
+revealed. Poker values render as `waiting`/`ready` before reveal and as the actual value
+plus an average summary after.
 
-### JavaScript Modules
+Deep links use `?r=<room_id>`. If the visitor is not logged in, the room ID is stored in
+`sessionStorage` under `pending_room` and joined right after registration.
 
-**`js/state.js`** - Client state:
-```javascript
-const appState = {
-  currentUser: null,
-  currentRoom: null,
-  roomState: {
-    bingo: {},
-    poker: {},
-    revealed: false
-  },
-  isConnected: false
-};
-```
-
-**`js/websocket.js`** - Connection:
-```javascript
-class WebSocketClient {
-  constructor(url) { }
-  connect() { }
-  disconnect() { }
-  send(message) { }
-  on(type, callback) { }
-  reconnect() { }
-}
-```
-
-**`js/ui.js`** - Rendering:
-```javascript
-function renderBingoGrid(config, selections) { }
-function renderPokerSelector(selections) { }
-function renderUserList(users) { }
-function updateConnectionStatus(connected) { }
-```
-
-**`js/app.js`** - Main logic:
-```javascript
-class BingoPokerApp {
-  constructor() { }
-  initialize() { }
-  handleBingoClick(cell) { }
-  handlePokerSelect(value) { }
-  handleReveal() { }
-  handleReset() { }
-}
-```
+### CSS
+Theme colors and spacing live in the `:root` block of `frontend/css/styles.css`.
+`index.html` links assets with a `?v=` cache-busting query string — bump it when shipping
+CSS/JS changes.
 
 ---
 
 ## Testing
 
-### Run Tests
+**There are currently no automated tests.** `backend/tests/` contains only an empty
+`__init__.py`, and `pytest` / `pytest-aiohttp` are declared in
+`backend/requirements-dev.txt` but nothing imports or runs them. Running `pytest` collects
+zero tests.
 
-```bash
-pytest tests/
+Until a suite exists, verification is manual:
 
-# With verbose output
-pytest tests/ -v
-
-# Specific test file
-pytest tests/test_room_manager.py
-
-# With coverage
-pytest tests/ --cov=backend --cov-report=html
-```
-
-### Test Structure
-
-**`tests/test_room_manager.py`**:
-```python
-import pytest
-from backend.utils.room_manager import RoomManager
-
-@pytest.fixture
-def room_manager():
-    return RoomManager()
-
-def test_create_room(room_manager):
-    room_id = room_manager.create_room("Test", config, "user@test.com")
-    assert room_id is not None
-    assert room_manager.load_room(room_id) is not None
-
-def test_mark_bingo_cell(room_manager):
-    # Test bingo selection
-    pass
-
-def test_reveal_room(room_manager):
-    # Test reveal functionality
-    pass
-```
+1. Start the server and open <http://localhost:8081>.
+2. Register a user, create a room from the default template, and join it.
+3. In a second browser profile or private window, register a second user, join via the
+   shared `?r=` link, and confirm both participants appear with distinct colors.
+4. Make bingo and poker selections in both windows and confirm hidden-until-reveal
+   behaviour for workers and always-visible behaviour for observers.
+5. Reveal, check the average summary, then reset.
+6. Watch `backend/logs/bingopoker.log` and the browser console/network tab for errors.
 
 ---
 
 ## Debugging
 
-### Debug Logging
+### Logs
+`backend/app.py` configures logging on startup:
+- File handler at `backend/logs/bingopoker.log` (level `INFO`, directory created
+  automatically).
+- Console handler at level `WARNING`, so the terminal stays quiet during normal use.
+- `aiohttp.access` is raised to `WARNING` so request URLs — which contain emails — are not
+  written to the log.
 
-Add to `backend/app.py`:
-```python
-import logging
+Log lines identify users by `user_id` and username. **Never add a log statement that
+writes an email address.**
 
-logging.basicConfig(level=logging.DEBUG)
-logger = logging.getLogger(__name__)
+### Debug endpoints
+When `DEBUG=true`, `backend/routes/debug.py` is mounted and exposes two destructive
+endpoints:
 
-# In handlers:
-logger.debug(f"Room joined: {room_id}")
-logger.info(f"User registered: {email}")
-logger.error(f"Error processing message: {error}")
-```
+- `DELETE /api/debug/users` — clears `users.json` and the in-memory user index
+- `DELETE /api/debug/rooms` — clears `rooms.json`, in-memory rooms and all sessions
+
+They are not registered at all when `DEBUG` is false.
+
+Add `?dev=true` to the frontend URL (for example <http://localhost:8081/?dev=true>) to
+unhide the "Delete all users" / "Delete all rooms" buttons that call them.
 
 ### Browser DevTools
-
-**Chrome/Edge/Firefox**:
-1. Press F12 to open DevTools
-2. Console tab: JavaScript errors/logs
-3. Network tab: HTTP requests and WebSocket frames
-4. Application tab: localStorage inspection
-
-### WebSocket Inspection
-
-**View WebSocket messages** in Network tab:
-1. Open DevTools → Network tab
-2. Look for "ws" entries
-3. Click WebSocket connection
-4. Messages sub-tab shows sent/received
-
-### File Watching (Optional)
-
-Install `watchdog` for auto-reload:
-```bash
-pip install watchdog
-```
-
-Then use in development:
-```python
-from watchdog.observers import Observer
-from watchdog.events import FileSystemEventHandler
-
-# Auto-reload on file change
-```
-
----
-
-## Performance Optimization
-
-### Backend
-
-1. **Connection Pooling**: Reuse WebSocket connections
-2. **Lazy Loading**: Load room configs on-demand
-3. **Memory Management**: Clean up empty rooms
-4. **Broadcast Optimization**: Only send to clients in specific room
-
-### Frontend
-
-1. **Debounce**: Debounce rapid bingo selections
-2. **Caching**: Cache room config locally
-3. **Lazy Rendering**: Only render visible elements
-4. **Bundle Minification**: Minify JS/CSS (optional)
-
----
-
-## Deployment Preparation
-
-### Environment Setup
-
-**Production `.env`**:
-```env
-HOST=0.0.0.0
-PORT=8081
-DEBUG=False
-DATA_DIR=/data/bingopoker
-```
-
-### Data Backup
-
-```bash
-# Backup user and room data
-cp -r backend/data backend/data.backup.$(date +%Y%m%d)
-```
-
-### Running in Production
-
-Option 1: **Gunicorn with Uvicorn**:
-```bash
-pip install gunicorn uvicorn
-uvicorn backend.app:app --host 0.0.0.0 --port 8081 --workers 4
-```
-
-Option 2: **Docker** (future):
-```dockerfile
-FROM python:3.11
-WORKDIR /app
-COPY requirements.txt .
-RUN pip install -r requirements.txt
-COPY backend/ .
-CMD ["python", "app.py"]
-```
+- **Console** — JavaScript errors and the `console.error` output from `api.js`/`app.js`.
+- **Network → WS** — inspect WebSocket frames (`room_state`, `user_joined`,
+  `bingo_updated`, `poker_updated`, `revealed`, `round_reset`, `replaced`, `user_left`).
+- **Application → Local Storage** — inspect or clear `bingopoker_user`.
 
 ---
 
 ## Common Issues & Solutions
 
-### Issue: Port Already in Use
+### Port already in use
 ```bash
-# Find process using port 8081
-lsof -i :8081  # macOS/Linux
-
-# Kill process
-kill -9 <PID>
-
-# Or use different port
-PORT=8082 python backend/app.py
+netstat -ano | findstr :8081     # Windows
+lsof -i :8081                    # macOS/Linux
 ```
+Or set `PORT=8082` in `.env`.
 
-### Issue: WebSocket Connection Failed
-- Check browser console for errors
-- Verify WebSocket URL format (ws:// or wss://)
-- Check server is running
-- Check firewall settings
+### `ModuleNotFoundError: No module named 'utils'`
+You ran `python backend/app.py` from the repository root. `cd backend` first.
 
-### Issue: Data Not Persisting
-- Verify `backend/data/` directory exists
-- Check file permissions (readable/writable)
-- Verify JSON file syntax is valid
-- Clear browser localStorage if needed
+### WebSocket closes immediately
+The handler returns 401 if the email is not a registered user and 404 if the room does not
+exist. Verify the account still exists (the debug endpoints may have wiped it) and that
+the room ID is valid.
 
-### Issue: Users See Each Other's Hidden Selections
-- Verify `revealed` flag properly managed
-- Check poker values only sent after reveal
-- Check WebSocket message filtering
+### "You joined this room from another tab or window."
+Expected. A second connection for the same user and room closes the first one and sends a
+`replaced` message.
 
----
+### Participants and colors reset after a restart
+Expected. Session state is in memory only; only room configs and user records persist.
 
-## Best Practices
-
-### Code Style
-- Use PEP 8 for Python
-- Use Prettier for JavaScript/HTML
-- Add type hints to Python functions
-- Add docstrings to all functions
-
-### Security
-- Validate all inputs (server-side)
-- Sanitize user-provided text
-- Use HTTPS/WSS in production
-- Implement rate limiting
-- No sensitive data in localStorage
-
-### Performance
-- Minimize WebSocket message size
-- Batch updates when possible
-- Clean up event listeners
-- Test with 20 concurrent users
-
-### Testing
-- Unit test all managers
-- Test API endpoints
-- Test WebSocket flow end-to-end
-- Test error cases
+### All users are unknown after changing the pepper
+Changing `EMAIL_HASH_PEPPER` (or deleting `backend/data/.email_pepper`) invalidates every
+stored email digest. Restore the old value or re-register.
 
 ---
 
-## Useful Commands
+## Data Backup
 
 ```bash
-# Install dependencies
-pip install -r backend/requirements.txt
+# Windows
+xcopy /E /I backend\data backend\data.backup
 
-# Run server
-python backend/app.py
-
-# Run tests
-pytest tests/
-
-# Format Python code
-black backend/
-
-# Lint Python code
-flake8 backend/
-
-# Run with auto-reload (development)
-python -m pip install watchdog
-python -m watchdog backend/app.py
-
-# Create virtual environment
-python -m venv venv
-
-# Activate venv
-source venv/bin/activate  # macOS/Linux
-venv\Scripts\activate      # Windows
+# macOS/Linux
+cp -r backend/data backend/data.backup.$(date +%Y%m%d)
 ```
 
----
-
-## Next Steps
-
-1. **Set up development environment** (follow Quick Start)
-2. **Review architecture** (read ARCHITECTURE.md)
-3. **Implement Room Manager** (backend/utils/room_manager.py)
-4. **Implement User Manager** (backend/utils/user_manager.py)
-5. **Implement HTTP endpoints** (backend/app.py)
-6. **Implement WebSocket handler** (backend/app.py)
-7. **Build frontend HTML/CSS** (frontend/)
-8. **Build frontend JavaScript** (frontend/js/)
-9. **Write tests** (tests/)
-10. **Deploy to production**
+Include `.email_pepper` in any backup — without it the user records are unusable.
 
 ---
 
-## Getting Help
-
-- Review relevant documentation files (README, ARCHITECTURE, etc.)
-- Check error messages in console/DevTools
-- Add logging for debugging
-- Test endpoints with curl/Postman
-- Use browser DevTools for frontend debugging
-
----
-
-*Last Updated: 2026-08-12*
+*Last Updated: 2026-08-18*

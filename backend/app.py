@@ -5,6 +5,7 @@ Run with: python backend/app.py
 """
 
 import os
+import logging
 from aiohttp import web
 from dotenv import load_dotenv
 
@@ -22,7 +23,7 @@ load_dotenv()
 # Configuration
 HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "8081"))
-DEBUG = os.getenv("DEBUG", "True").lower() == "true"
+DEBUG = os.getenv("DEBUG", "False").lower() == "true"
 DATA_DIR = os.getenv(
     "DATA_DIR",
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
@@ -32,24 +33,72 @@ if not os.path.isabs(DATA_DIR):
     DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), DATA_DIR)
 
 
+def _setup_logging(data_dir: str) -> None:
+    """
+    Configure logging to file and console.
+    
+    Args:
+        data_dir: Directory where logs should be stored
+    """
+    log_dir = os.path.join(os.path.dirname(data_dir), "logs")
+    os.makedirs(log_dir, exist_ok=True)
+    log_file = os.path.join(log_dir, "bingopoker.log")
+    
+    # Create logger
+    logger = logging.getLogger()
+    logger.setLevel(logging.INFO)
+    
+    # File handler - logs all events
+    file_handler = logging.FileHandler(log_file)
+    file_handler.setLevel(logging.INFO)
+    
+    # Console handler - logs warnings and errors only
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.WARNING)
+    
+    # Formatter
+    formatter = logging.Formatter(
+        '%(asctime)s [%(levelname)s] %(name)s: %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    
+    file_handler.setFormatter(formatter)
+    console_handler.setFormatter(formatter)
+    
+    logger.addHandler(file_handler)
+    logger.addHandler(console_handler)
+    
+    # Suppress asyncio connection reset errors in event loop
+    logging.getLogger("asyncio").setLevel(logging.WARNING)
+
+    # Drop per-request access logs; they are noisy and echo user emails in URLs
+    logging.getLogger("aiohttp.access").setLevel(logging.WARNING)
+
+
 async def startup_handler(app: web.Application) -> None:
     """
     Handle startup events.
 
-    Load manager data from disk.
+    Load manager data from disk and configure logging.
     """
+    # Configure logging
+    _setup_logging(DATA_DIR)
+    
+    logger = logging.getLogger(__name__)
+    logger.info("Starting BingoPoker application")
+    
     user_manager = UserManager(data_dir=DATA_DIR)
     room_manager = RoomManager(data_dir=DATA_DIR)
 
     await user_manager.load()
     await room_manager.load()
+    await room_manager.migrate_creator_ids(user_manager.resolve_user_id)
 
     # Store managers in app context for access in request handlers
     app["user_manager"] = user_manager
     app["room_manager"] = room_manager
-
-    print(f"Loaded {len(user_manager.users)} users")
-    print(f"Loaded {len(room_manager.rooms)} room configurations")
+    
+    logger.info(f"Loaded {len(user_manager.users)} users and {len(room_manager.rooms)} rooms")
 
 
 async def cleanup_handler(app: web.Application) -> None:
@@ -58,7 +107,8 @@ async def cleanup_handler(app: web.Application) -> None:
 
     Clean up resources.
     """
-    print("Server shutting down")
+    logger = logging.getLogger(__name__)
+    logger.info("Server shutting down")
 
 
 async def health_check_handler(request: web.Request) -> web.Response:
@@ -102,7 +152,9 @@ def create_app() -> web.Application:
     # Setup route modules
     setup_user_routes(app)
     setup_room_routes(app)
-    setup_debug_routes(app)
+    # Debug routes wipe all persisted data, so they stay out of production builds
+    if DEBUG:
+        setup_debug_routes(app)
     app.router.add_get("/ws/{room_id}/{user_email}", room_websocket_handler)
 
     # Static files served directly under /css and /js

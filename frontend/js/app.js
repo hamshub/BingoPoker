@@ -92,6 +92,9 @@ function checkAuthStatus() {
         try {
             appState.currentUser = JSON.parse(savedUser);
             showScreen('roomSelectScreen');
+            if (!appState.currentUser.user_id) {
+                refreshStoredUser();
+            }
             loadRooms();
             updateUserDisplay();
 
@@ -116,6 +119,16 @@ function checkAuthStatus() {
     }
 }
 
+// Upgrades sessions stored before user IDs were introduced
+async function refreshStoredUser() {
+    const result = await BingoPokerAPI.getUser(appState.currentUser.email);
+    if (result.success) {
+        appState.currentUser = { ...appState.currentUser, ...result.data.user };
+        localStorage.setItem('bingopoker_user', JSON.stringify(appState.currentUser));
+        loadRooms();
+    }
+}
+
 function setupEventListeners() {
     // Registration form
     const registerForm = document.getElementById('registerForm');
@@ -129,6 +142,12 @@ function setupEventListeners() {
         createRoomForm.addEventListener('submit', handleCreateRoom);
     }
     
+    // Role swap button
+    const roleSwapBtn = document.getElementById('roleSwapBtn');
+    if (roleSwapBtn) {
+        roleSwapBtn.addEventListener('click', handleRoleSwap);
+    }
+    
     // Logout button
     const logoutBtn = document.getElementById('logoutBtn');
     if (logoutBtn) {
@@ -139,6 +158,12 @@ function setupEventListeners() {
     const leaveRoomBtn = document.getElementById('leaveRoomBtn');
     if (leaveRoomBtn) {
         leaveRoomBtn.addEventListener('click', handleLeaveRoom);
+    }
+    
+    // Download grid button
+    const downloadGridBtn = document.getElementById('downloadGridBtn');
+    if (downloadGridBtn) {
+        downloadGridBtn.addEventListener('click', handleDownloadGrid);
     }
     
     // Reveal/Reset buttons
@@ -219,6 +244,28 @@ function updateUserDisplay() {
     if (display) {
         display.textContent = appState.currentUser.username;
     }
+    
+    const roleBtn = document.getElementById('roleSwapBtn');
+    if (roleBtn && appState.currentUser.role) {
+        roleBtn.textContent = appState.currentUser.role.charAt(0).toUpperCase() + appState.currentUser.role.slice(1);
+    }
+}
+
+async function handleRoleSwap() {
+    if (!appState.currentUser) return;
+    
+    const newRole = appState.currentUser.role === 'worker' ? 'observer' : 'worker';
+    appState.currentUser.role = newRole;
+    
+    const result = await BingoPokerAPI.updateRole(appState.currentUser.email, newRole);
+    if (!result.success) {
+        console.error('Failed to update role:', result.error);
+        appState.currentUser.role = newRole === 'worker' ? 'observer' : 'worker';
+        return;
+    }
+    
+    localStorage.setItem('bingopoker_user', JSON.stringify(appState.currentUser));
+    updateUserDisplay();
 }
 
 // ===== Room Selection =====
@@ -239,6 +286,12 @@ async function loadRooms() {
         } else {
             roomsList.innerHTML = appState.rooms.map(room => {
                 const shareUrl = `${location.origin}/?r=${room.room_id}`;
+                const isCreator = appState.currentUser && appState.currentUser.user_id === room.created_by;
+                const deleteButton = isCreator ? `
+                    <button class="btn btn-small btn-danger room-card-delete" onclick="handleDeleteRoom('${room.room_id}')">
+                        Remove
+                    </button>
+                ` : '';
                 return `
                 <div class="room-card">
                     <h3>${escapeHtml(room.name)}</h3>
@@ -246,14 +299,35 @@ async function loadRooms() {
                         <div>${room.user_count} participant${room.user_count !== 1 ? 's' : ''}</div>
                         <div><span class="room-link" onclick="copyRoomLink('${shareUrl}', this)" title="Click to copy invite link">${displayUrl(shareUrl)}</span></div>
                     </div>
-                    <button class="btn btn-primary btn-small room-card-button" onclick="joinRoom('${room.room_id}')">
-                        Join
-                    </button>
+                    <div class="room-card-buttons">
+                        <button class="btn btn-primary btn-small room-card-button" onclick="joinRoom('${room.room_id}')">
+                            Join
+                        </button>
+                        ${deleteButton}
+                    </div>
                 </div>`;
             }).join('');
         }
     } else {
         roomsList.innerHTML = '<div class="loading">Error loading rooms</div>';
+    }
+}
+
+async function handleDeleteRoom(roomId) {
+    const room = appState.rooms.find(r => r.room_id === roomId);
+    const roomName = room ? room.name : roomId;
+    const confirmed = confirm(`Are you sure you want to delete "${roomName}"? This cannot be undone.`);
+    if (!confirmed) return;
+    
+    showLoading(true);
+    const result = await BingoPokerAPI.deleteRoom(roomId, appState.currentUser.email);
+    showLoading(false);
+    
+    if (result.success) {
+        // Reload rooms list
+        await loadRooms();
+    } else {
+        alert('Failed to delete room: ' + result.error);
     }
 }
 
@@ -268,8 +342,11 @@ async function handleCreateRoom(e) {
     
     // Get grid - use default or custom
     let grid = GridUtils.DEFAULT_GRID;
+    const gridInputSection = document.getElementById('gridInputSection');
     const customGridInputs = document.querySelectorAll('.grid-editor-cell input');
-    if (customGridInputs.length > 0) {
+    
+    // Only use custom grid if the section is visible and has inputs
+    if (gridInputSection && !gridInputSection.classList.contains('hidden') && customGridInputs.length > 0) {
         grid = extractGridFromInputs(customGridInputs);
     }
     
@@ -324,6 +401,26 @@ async function handleLeaveRoom() {
     history.pushState({}, '', '/');
     showScreen('roomSelectScreen');
     loadRooms();
+}
+
+function handleDownloadGrid() {
+    if (!appState.currentGrid || !appState.currentRoom) return;
+    
+    const config = {
+        name: `${appState.currentRoom.config.name} - Bingo Config`,
+        grid: appState.currentGrid
+    };
+    
+    const json = JSON.stringify(config, null, 2);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `bingo-config-${appState.currentRoom.room_id}.json`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
 }
 
 // ===== Game Screen Rendering =====
@@ -548,10 +645,6 @@ function connectWebSocket(roomId) {
         handleWsMessage(msg);
     };
 
-    ws.onopen = () => {
-        // room_state arrives via WS message; no REST fallback needed
-    };
-
     ws.onclose = () => {
         appState.ws = null;
     };
@@ -622,7 +715,7 @@ function handleWsMessage(msg) {
                 appState.currentRoom.session.poker_selections = {};
                 appState.currentRoom.session.revealed = false;
             }
-            renderGameScreen();  // re-renders status panel via renderRoundControls
+            renderGameScreen();
             break;
     }
 }
@@ -640,7 +733,15 @@ function handleReset() {
 // ===== Grid Editor =====
 
 function useDefaultTemplate() {
-    document.getElementById('gridInputSection').classList.add('hidden');
+    const gridInputSection = document.getElementById('gridInputSection');
+    if (gridInputSection) {
+        gridInputSection.classList.add('hidden');
+        // Clear the grid editor to prevent confusion
+        const gridEditor = document.getElementById('gridEditor');
+        if (gridEditor) {
+            gridEditor.innerHTML = '';
+        }
+    }
 }
 
 function useEmptyTemplate() {
@@ -730,5 +831,6 @@ async function debugDeleteRooms() {
 function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
-    return div.innerHTML;
+    // textContent escaping leaves quotes intact, which is unsafe inside attributes
+    return div.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }

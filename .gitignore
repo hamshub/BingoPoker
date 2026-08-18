@@ -48,3 +48,5 @@ Thumbs.db
 
 # Project specific
 *.log
+backend/logs/
+backend/data/

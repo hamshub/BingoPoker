@@ -2,7 +2,9 @@
 
 ## Overview
 
-BingoPoker uses a hybrid REST + WebSocket API architecture. REST endpoints handle initial operations (user registration, room creation, loading), while WebSocket provides real-time bidirectional communication for gameplay.
+BingoPoker uses a hybrid REST + WebSocket API architecture. REST endpoints handle initial operations (user registration, room creation, listing, deletion), while WebSocket provides real-time bidirectional communication for gameplay.
+
+All REST responses are JSON. Errors always use the shape `{ "error": "<code>", "message": "<text>" }`.
 
 ---
 
@@ -13,12 +15,14 @@ BingoPoker uses a hybrid REST + WebSocket API architecture. REST endpoints handl
 http://localhost:8081
 ```
 
+Host and port come from the `HOST` (default `0.0.0.0`) and `PORT` (default `8081`) environment variables.
+
 ---
 
 ### 1. Serve HTML
 **Endpoint**: `GET /`
 
-**Description**: Serves the main application HTML
+**Description**: Serves `frontend/index.html`
 
 **Request**:
 ```http
@@ -34,6 +38,8 @@ Content-Type: text/html
 <!doctype html>
 <html>...</html>
 ```
+
+Static assets are mounted at `/css`, `/js`, and `/templates`, served from the matching `frontend/` subdirectories.
 
 ---
 
@@ -64,7 +70,7 @@ Content-Type: application/json
 ### 3. Register User
 **Endpoint**: `POST /api/user`
 
-**Description**: Register a new user or get existing user profile
+**Description**: Register a new user or get an existing user's profile
 
 **Request**:
 ```http
@@ -79,7 +85,7 @@ Content-Type: application/json
 }
 ```
 
-`role` defaults to `"worker"` if omitted. Valid values: `"worker"` (developer/tester) or `"observer"` (PO/stakeholder).
+`role` defaults to `"worker"` if omitted. Valid values: `"worker"` (developer/tester) or `"observer"` (PO/stakeholder); any other value falls back to `"worker"`.
 
 **Response (New User)**:
 ```http
@@ -88,6 +94,7 @@ Content-Type: application/json
 
 {
   "user": {
+    "user_id": "9f1c2d3e4a5b6c7d8e9f0a1b2c3d4e5f",
     "email": "alice@company.com",
     "username": "Alice Johnson",
     "role": "worker"
@@ -103,6 +110,7 @@ Content-Type: application/json
 
 {
   "user": {
+    "user_id": "9f1c2d3e4a5b6c7d8e9f0a1b2c3d4e5f",
     "email": "alice@company.com",
     "username": "Alice Johnson",
     "role": "worker"
@@ -111,29 +119,33 @@ Content-Type: application/json
 }
 ```
 
+**Note**: `email` in the response is echoed back from the request. Plain emails are never persisted — the server stores only an HMAC-SHA256 digest (see DATA_STRUCTURES.md).
+
 **Error Responses**:
 
-Invalid email format:
+Missing email or username:
 ```http
 HTTP/1.1 400 Bad Request
 Content-Type: application/json
 
 {
-  "error": "invalid_email",
-  "message": "Please provide a valid email address"
+  "error": "invalid_input",
+  "message": "Email and username required"
 }
 ```
 
-Invalid username:
+Validation failure inside the user manager (bad email format, username length):
 ```http
 HTTP/1.1 400 Bad Request
 Content-Type: application/json
 
 {
-  "error": "invalid_username",
-  "message": "Username must be 1-50 characters"
+  "error": "registration_failed",
+  "message": "Email format is invalid"
 }
 ```
+
+A malformed JSON body returns `400 invalid_json`; an unhandled exception returns `500 server_error`.
 
 ---
 
@@ -155,6 +167,7 @@ Content-Type: application/json
 
 {
   "user": {
+    "user_id": "9f1c2d3e4a5b6c7d8e9f0a1b2c3d4e5f",
     "email": "alice@company.com",
     "username": "Alice Johnson",
     "role": "worker"
@@ -169,7 +182,7 @@ Content-Type: application/json
 
 {
   "error": "user_not_found",
-  "message": "User profile does not exist"
+  "message": "User alice@company.com not found"
 }
 ```
 
@@ -178,7 +191,7 @@ Content-Type: application/json
 ### 5. Update User Profile
 **Endpoint**: `PUT /api/user/{email}`
 
-**Description**: Update user profile (username only)
+**Description**: Update the user's username and/or role. At least one of the two fields must be present.
 
 **Request**:
 ```http
@@ -187,7 +200,8 @@ Host: localhost:8081
 Content-Type: application/json
 
 {
-  "username": "Alice Smith"
+  "username": "Alice Smith",
+  "role": "observer"
 }
 ```
 
@@ -198,12 +212,19 @@ Content-Type: application/json
 
 {
   "user": {
+    "user_id": "9f1c2d3e4a5b6c7d8e9f0a1b2c3d4e5f",
     "email": "alice@company.com",
     "username": "Alice Smith",
-    "role": "worker"
+    "role": "observer"
   }
 }
 ```
+
+**Error Responses**:
+- `400 invalid_input` — neither `username` nor `role` provided
+- `400 update_failed` — username length invalid, or role is not `worker`/`observer`
+- `400 invalid_json` — malformed JSON body
+- `404 user_not_found` — no such user
 
 ---
 
@@ -231,6 +252,8 @@ Content-Type: application/json
 }
 ```
 
+`created_by` is the creator's **email**. The server resolves it to the creator's random user ID and stores only that ID.
+
 **Response**:
 ```http
 HTTP/1.1 201 Created
@@ -253,18 +276,40 @@ Content-Type: application/json
 
 {
   "error": "invalid_room_name",
-  "message": "Room name must be 1-100 characters"
+  "message": "Room name must be 100 characters or less"
 }
 ```
 
-Invalid grid (not 5x5):
+Invalid grid (not a 5x5 array of strings):
 ```http
 HTTP/1.1 400 Bad Request
 Content-Type: application/json
 
 {
   "error": "invalid_grid",
-  "message": "Grid must be exactly 5x5"
+  "message": "Grid must be 5x5 array of strings"
+}
+```
+
+Missing `created_by`:
+```http
+HTTP/1.1 400 Bad Request
+Content-Type: application/json
+
+{
+  "error": "invalid_input",
+  "message": "created_by (email) required"
+}
+```
+
+Creator is not a registered user:
+```http
+HTTP/1.1 404 Not Found
+Content-Type: application/json
+
+{
+  "error": "user_not_found",
+  "message": "Creator is not a registered user"
 }
 ```
 
@@ -284,7 +329,7 @@ Content-Type: application/json
 ### 7. Get Room Configuration
 **Endpoint**: `GET /api/room/{room_id}`
 
-**Description**: Get room configuration and current state
+**Description**: Get room configuration and current session state
 
 **Request**:
 ```http
@@ -292,7 +337,7 @@ GET /api/room/room-abc123xy HTTP/1.1
 Host: localhost:8081
 ```
 
-**Response (Not Revealed)**:
+**Response**:
 ```http
 HTTP/1.1 200 OK
 Content-Type: application/json
@@ -303,13 +348,19 @@ Content-Type: application/json
     "config": {
       "room_id": "room-abc123xy",
       "name": "Sprint 42 Planning",
-      "config": { "grid": [...] },
-      "created_at": "2026-08-12T10:30:00Z",
-      "created_by": "alice@company.com"
+      "config": { "grid": [] },
+      "created_at": "2026-08-12T10:30:00.123456",
+      "created_by": "9f1c2d3e4a5b6c7d8e9f0a1b2c3d4e5f"
     },
     "session": {
       "users": [
-        { "email": "alice@company.com", "username": "Alice Johnson", "role": "worker", "color": "#E63946" }
+        {
+          "user_id": "9f1c2d3e4a5b6c7d8e9f0a1b2c3d4e5f",
+          "email": "alice@company.com",
+          "username": "Alice Johnson",
+          "role": "worker",
+          "color": "#E63946"
+        }
       ],
       "bingo_selections": {
         "alice@company.com": [[0, 0], [1, 2]]
@@ -317,28 +368,24 @@ Content-Type: application/json
       "poker_selections": {
         "alice@company.com": "8"
       },
-      "revealed": false
+      "revealed": false,
+      "color_counter": 1
     }
   }
 }
 ```
 
-**Response (Revealed)**: identical shape, with `session.revealed: true` and all `poker_selections` values populated.
+`config.created_by` is a **user ID**, never an email. It may be `null` for legacy rooms whose creator could not be resolved during migration.
 
-**Error Response**:
-```http
-HTTP/1.1 404 Not Found
-Content-Type: application/json
+If nobody is currently connected, `session` is the empty default (`users: []`, empty selection maps, `revealed: false`).
 
-{
-  "error": "room_not_found",
-  "message": "Room does not exist"
-}
-```
+**Error Responses**:
+- `400 invalid_room_id` — the ID does not match `room-{8 alphanumeric}`
+- `404 room_not_found` — no such room
 
 ---
 
-### 8. List Active Rooms
+### 8. List Rooms
 **Endpoint**: `GET /api/rooms`
 
 **Description**: Get list of all persisted rooms with live participant counts
@@ -360,19 +407,70 @@ Content-Type: application/json
       "room_id": "room-abc123xy",
       "name": "Sprint 42 Planning",
       "user_count": 2,
-      "created_at": "2026-08-12T10:30:00Z",
-      "created_by": "alice@company.com"
+      "created_at": "2026-08-12T10:30:00.123456",
+      "created_by": "9f1c2d3e4a5b6c7d8e9f0a1b2c3d4e5f"
     },
     {
       "room_id": "room-def456ab",
       "name": "Design Sprint 2026",
-      "user_count": 1,
-      "created_at": "2026-08-11T14:30:00Z",
-      "created_by": "bob@company.com"
+      "user_count": 0,
+      "created_at": "2026-08-11T14:30:00.654321",
+      "created_by": null
     }
-  ]
+  ],
+  "count": 2
 }
 ```
+
+`created_by` is a user ID (or `null`), never an email. The frontend compares it against the logged-in user's `user_id` to decide whether to show the delete action.
+
+---
+
+### 9. Delete Room
+**Endpoint**: `DELETE /api/room/{room_id}`
+
+**Description**: Delete a room and its session state. Only the room creator may do this.
+
+**Request**:
+```http
+DELETE /api/room/room-abc123xy HTTP/1.1
+Host: localhost:8081
+Content-Type: application/json
+
+{
+  "created_by": "alice@company.com"
+}
+```
+
+`created_by` is the requester's **email**; the server resolves it to a user ID and compares it with the room's stored creator ID.
+
+**Response**:
+```http
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{
+  "message": "Room deleted successfully"
+}
+```
+
+**Error Responses**:
+- `400 invalid_room_id` — malformed room ID
+- `400 invalid_input` — missing `created_by`
+- `400 invalid_json` — malformed JSON body
+- `403 unauthorized` — requester is not the room creator
+- `404 room_not_found` — no such room
+
+---
+
+### 10. Debug Endpoints (DEBUG mode only)
+
+Registered only when the `DEBUG` environment variable is `true`. **They wipe all persisted data.**
+
+| Endpoint | Effect | Response |
+| --- | --- | --- |
+| `DELETE /api/debug/users` | Clears `users.json` and the in-memory user registry | `{"message": "All users deleted"}` |
+| `DELETE /api/debug/rooms` | Clears `rooms.json` and all in-memory sessions | `{"message": "All rooms deleted"}` |
 
 ---
 
@@ -381,7 +479,11 @@ Content-Type: application/json
 ### Connection
 **URL**: `ws://localhost:8081/ws/{room_id}/{user_email}`
 
-The room and user email are path parameters — there is no separate "join" message; connecting to this URL joins the room immediately (the server validates the user and room exist first, returning 401/404 otherwise).
+The room and user email are path parameters — there is no separate "join" message; connecting to this URL joins the room immediately.
+
+Before upgrading, the server validates:
+- the user is registered — otherwise `HTTP 401 User not found`
+- the room exists — otherwise `HTTP 404 Room not found`
 
 **Upgrade Request**:
 ```http
@@ -400,6 +502,8 @@ Upgrade: websocket
 Connection: Upgrade
 Sec-WebSocket-Accept: ...
 ```
+
+**Duplicate connections**: if the same email is already connected to that room, the previous socket receives `{"type": "replaced", "payload": {}}` and is closed before the new one is registered.
 
 ---
 
@@ -423,6 +527,7 @@ All messages (both directions) use the envelope `{ "type": "...", "payload": {..
 ```
 
 **Server Processing**:
+- Ignored silently if `row` or `col` is missing, or if the coordinates fall outside 0–4
 - Toggles the cell in the session's `bingo_selections` for this user (add if absent, remove if present)
 - No validation against `revealed` state — selections can technically still be sent after reveal, but the UI disables clicking
 - Broadcasts `bingo_updated` to all clients in the room (including sender)
@@ -446,6 +551,7 @@ All messages (both directions) use the envelope `{ "type": "...", "payload": {..
 
 **Server Processing**:
 - Overwrites any previous selection for this user
+- Missing values, or values outside the allowed list, are ignored silently
 - Broadcasts `poker_updated` (without the value) to all clients in the room
 
 ---
@@ -493,17 +599,24 @@ All messages (both directions) use the envelope `{ "type": "...", "payload": {..
     "config": {
       "room_id": "room-abc123xy",
       "name": "Sprint 42 Planning",
-      "config": { "grid": [...] },
-      "created_at": "2026-08-12T10:30:00Z",
-      "created_by": "alice@company.com"
+      "config": { "grid": [] },
+      "created_at": "2026-08-12T10:30:00.123456",
+      "created_by": "9f1c2d3e4a5b6c7d8e9f0a1b2c3d4e5f"
     },
     "session": {
       "users": [
-        { "email": "alice@company.com", "username": "Alice Johnson", "role": "worker", "color": "#E63946" }
+        {
+          "user_id": "9f1c2d3e4a5b6c7d8e9f0a1b2c3d4e5f",
+          "email": "alice@company.com",
+          "username": "Alice Johnson",
+          "role": "worker",
+          "color": "#E63946"
+        }
       ],
       "bingo_selections": { "alice@company.com": [[0, 0], [1, 3]] },
       "poker_selections": { "alice@company.com": "8" },
-      "revealed": false
+      "revealed": false,
+      "color_counter": 1
     }
   }
 }
@@ -514,7 +627,7 @@ All messages (both directions) use the envelope `{ "type": "...", "payload": {..
 #### 2. User Joined
 **Message Type**: `user_joined`
 
-**Purpose**: Sent to everyone else in the room (sender excluded) when a new client connects
+**Purpose**: Sent to everyone else in the room (the joining client excluded) when a new client connects
 
 **Structure**:
 ```json
@@ -522,8 +635,8 @@ All messages (both directions) use the envelope `{ "type": "...", "payload": {..
   "type": "user_joined",
   "payload": {
     "users": [
-      { "email": "alice@company.com", "username": "Alice Johnson", "role": "worker", "color": "#E63946" },
-      { "email": "bob@company.com", "username": "Bob Smith", "role": "worker", "color": "#F4A300" }
+      { "user_id": "9f1c...", "email": "alice@company.com", "username": "Alice Johnson", "role": "worker", "color": "#E63946" },
+      { "user_id": "7b2a...", "email": "bob@company.com", "username": "Bob Smith", "role": "worker", "color": "#F4A300" }
     ]
   }
 }
@@ -542,10 +655,12 @@ All messages (both directions) use the envelope `{ "type": "...", "payload": {..
   "type": "user_left",
   "payload": {
     "email": "alice@company.com",
-    "users": [ /* remaining users, full list */ ]
+    "users": []
   }
 }
 ```
+
+`payload.users` is the remaining users (full list).
 
 ---
 
@@ -566,6 +681,8 @@ All messages (both directions) use the envelope `{ "type": "...", "payload": {..
 ```
 
 `payload.bingo_selections` is the full map for all users, not a single delta — cell coordinates are `[row, col]` pairs.
+
+Visibility is enforced client-side: a **worker**'s cells are rendered only for that worker until reveal, while an **observer**'s cells are always shown to everyone.
 
 ---
 
@@ -639,7 +756,25 @@ All messages (both directions) use the envelope `{ "type": "...", "payload": {..
 }
 ```
 
-Sent only for malformed JSON or an unrecognized `type` field — there is no granular error-code system for validation failures (e.g. invalid cell, invalid poker value); the server just silently ignores those requests.
+Sent only for malformed JSON (message `"Invalid JSON"`) or an unrecognized `type` field — there is no granular error-code system for validation failures (e.g. invalid cell, invalid poker value); the server just silently ignores those requests.
+
+---
+
+## Validation Rules
+
+Backend validation lives in `backend/utils/validators.py`:
+
+| Field | Rule |
+| --- | --- |
+| Email | `^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$` |
+| Username | 1–50 characters |
+| Room name | 1–100 characters |
+| Room ID | `^room-[a-zA-Z0-9]{8}$` |
+| Grid | List of 5 lists of 5 strings |
+| Poker value | One of `0`, `1`, `2`, `3`, `5`, `8`, `13`, `21`, `split` |
+| Bingo cell | Row and column each in 0–4 (checked in `RoomManager`) |
+
+There is no per-cell text length validator on the backend; the 50-character cap on grid cells is only a frontend `maxLength` on the editor inputs.
 
 ---
 
@@ -653,20 +788,26 @@ Sent only for malformed JSON or an unrecognized `type` field — there is no gra
 }
 ```
 
-### Common REST Error Codes
+### REST Error Codes
 - `invalid_input` — missing required field
-- `invalid_email` — email format invalid
 - `invalid_room_name` — room name invalid
-- `invalid_grid` — grid not 5×5
+- `invalid_grid` — grid is not a 5×5 array of strings
 - `invalid_room_id` — room ID doesn't match `room-{8 alphanumeric}` format
 - `duplicate_name` — a room with that name already exists
 - `room_not_found` — room doesn't exist
-- `user_not_found` — user doesn't exist
-- `registration_failed` / `creation_failed` — validation failed inside the manager
+- `user_not_found` — user doesn't exist / creator not registered
+- `unauthorized` — requester is not the room creator
+- `registration_failed` / `update_failed` / `creation_failed` / `deletion_failed` — validation failed inside the manager
 - `invalid_json` — malformed JSON body
 - `server_error` — unhandled exception (500)
 
 There is currently no rate limiting implemented.
+
+---
+
+## Logging
+
+Server events are written to `backend/logs/bingopoker.log` (INFO and above to file, WARNING and above to console). Logged events: user registered, user login, room created, room deleted, user joined room, user left room. Log lines reference `user_id`, never the email address. The `aiohttp.access` and `asyncio` loggers are raised to WARNING to suppress noise and to keep emails out of access-log URLs.
 
 ---
 
@@ -676,4 +817,4 @@ There is no automatic client-side reconnection logic. If the WebSocket closes (n
 
 ---
 
-*Last Updated: 2026-08-13*
+*Last Updated: 2026-08-18*

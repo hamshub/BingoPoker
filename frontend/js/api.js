@@ -52,14 +52,14 @@ class BingoPokerAPI {
     }
 
     /**
-     * Update user username
+     * Update user role
      */
-    static async updateUsername(email, newUsername) {
+    static async updateRole(email, newRole) {
         try {
             const response = await fetch(`${API_BASE}/user/${encodeURIComponent(email)}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ username: newUsername })
+                body: JSON.stringify({ role: newRole })
             });
             
             const data = await response.json();
@@ -70,7 +70,7 @@ class BingoPokerAPI {
             
             return { success: true, data };
         } catch (error) {
-            console.error('Update username error:', error);
+            console.error('Update role error:', error);
             return { success: false, error: error.message };
         }
     }
@@ -137,6 +137,30 @@ class BingoPokerAPI {
             return { success: true, data };
         } catch (error) {
             console.error('List rooms error:', error);
+            return { success: false, error: error.message };
+        }
+    }
+
+    /**
+     * Delete a room
+     */
+    static async deleteRoom(roomId, createdBy) {
+        try {
+            const response = await fetch(`${API_BASE}/room/${roomId}`, {
+                method: 'DELETE',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ created_by: createdBy })
+            });
+            
+            const data = await response.json();
+            
+            if (!response.ok) {
+                throw new Error(data.message || 'Delete failed');
+            }
+            
+            return { success: true, data };
+        } catch (error) {
+            console.error('Delete room error:', error);
             return { success: false, error: error.message };
         }
     }

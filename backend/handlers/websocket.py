@@ -45,6 +45,9 @@ async def room_websocket_handler(request: web.Request) -> web.WebSocketResponse:
 
     # Add user to session with color assigned by join order
     await room_manager.add_user_to_session(room_id, email, user)
+    room_name = (await room_manager.get_room(room_id)).get('name', 'Unknown')
+    user_id = user.get("user_id")
+    logger.info(f"User joined room: {user_id} ({user.get('username')}) -> {room_id} ('{room_name}')")
 
     # Send current room state to the newly joined user
     room_state = await room_manager.get_room_state(room_id)
@@ -64,8 +67,10 @@ async def room_websocket_handler(request: web.Request) -> web.WebSocketResponse:
                 await _handle_message(ws, room_id, email, msg.data, room_manager)
             elif msg.type in (WSMsgType.ERROR, WSMsgType.CLOSE):
                 break
+    except Exception as e:
+        logger.warning(f"WebSocket error for user {user_id} in room {room_id}: {type(e).__name__}: {e}")
     finally:
-        await _disconnect(room_id, email, room_manager)
+        await _disconnect(room_id, email, room_manager, room_name, user_id)
 
     return ws
 
@@ -146,18 +151,28 @@ async def _broadcast(room_id: str, message: dict, exclude: str = None) -> None:
             continue
         try:
             await ws.send_json(message)
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Failed to send message in {room_id}: {type(e).__name__}")
             dead.append(email)
     for email in dead:
         room_conns.pop(email, None)
 
 
-async def _disconnect(room_id: str, email: str, room_manager) -> None:
+async def _disconnect(
+    room_id: str, email: str, room_manager, room_name: str = None, user_id: str = None
+) -> None:
     _connections.get(room_id, {}).pop(email, None)
     if not _connections.get(room_id):
         _connections.pop(room_id, None)
 
-    await room_manager.remove_user_from_session(room_id, email)
+    try:
+        await room_manager.remove_user_from_session(room_id, email)
+        if room_name:
+            logger.info(f"User left room: {user_id} <- {room_id} ('{room_name}')")
+        else:
+            logger.info(f"User disconnected: {user_id} <- {room_id}")
+    except Exception as e:
+        logger.debug(f"Error removing user from session: {type(e).__name__}: {e}")
 
     remaining = room_manager.sessions.get(room_id, {}).get("users", [])
     await _broadcast(room_id, {

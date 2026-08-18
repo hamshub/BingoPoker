@@ -1,561 +1,214 @@
-# BingoPoker Development Coding Rules & Standards
+# BingoPoker Coding Rules & Standards
 
-## Overview
-These rules guide all code generation by Copilot with user oversight. User only codes when necessary.
-
-> **Note**: The file structures below reflect the original planning targets. The actual project consolidated further — the WebSocket handler lives at `backend/handlers/websocket.py` (not `routes/websocket.py` + `handlers/ws_messages.py`), and the frontend uses just two JS files (`js/app.js`, `js/api.js`) instead of the ten-file split shown here. See [README.md](README.md) for the current, accurate project structure.
+Conventions the codebase actually follows. Apply them to any new code.
 
 ---
 
 ## File Organization
 
-### Principle: Separation of Concerns
-- **One responsibility per file** - Each file has a single, clear purpose
-- **Maximum file size: ~300 lines** - Improves readability and testability
-- **Module naming reflects content** - File names clearly indicate what they contain
+- **One responsibility per file.** Managers hold state and persistence, routes hold HTTP
+  handling, handlers hold WebSocket handling, validators hold validation.
+- **Keep modules small.** Existing backend modules are 30–350 lines; split before a module
+  becomes a grab bag.
+- **Module names reflect content** (`user_manager.py`, `color_palette.py`, `websocket.py`).
 
-### Backend Structure
+Current layout:
+
 ```
 backend/
-├── app.py                       # Main aiohttp app setup (100 lines)
-├── requirements.txt             # Dependencies only
-├── utils/
-│   ├── __init__.py
-│   ├── color_palette.py        # Color logic only (~100 lines)
-│   ├── validators.py           # Validation functions only (~150 lines)
-│   ├── user_manager.py         # User management only (~200 lines)
-│   └── room_manager.py         # Room management only (~250 lines)
-├── routes/
-│   ├── __init__.py
-│   ├── users.py                # User REST endpoints (~150 lines)
-│   ├── rooms.py                # Room REST endpoints (~180 lines)
-│   └── websocket.py            # WebSocket setup (~250 lines)
-├── handlers/
-│   ├── __init__.py
-│   └── ws_messages.py          # WebSocket message handlers (~200+ lines)
-└── data/
-    ├── users.json              # Persistent user registry
-    └── rooms.json              # Persistent room configs
-```
+├── app.py                  # App factory, config, logging, route wiring
+├── routes/                 # users.py, rooms.py, debug.py
+├── handlers/               # websocket.py
+├── utils/                  # user_manager.py, room_manager.py, color_palette.py, validators.py
+└── data/                   # users.json, rooms.json, .email_pepper
 
-### Frontend Structure
-```
 frontend/
-├── index.html                   # Single HTML file (all layouts)
-├── css/
-│   └── styles.css              # All CSS (modular via classes)
-└── js/
-    ├── state.js                # State management (~120 lines)
-    ├── websocket.js            # WebSocket client (~150 lines)
-    ├── registration.js         # Registration flow (~150 lines)
-    ├── room-creation.js        # Room creation flow (~200 lines)
-    ├── room-join.js            # Room join flow (~150 lines)
-    ├── bingo.js                # Bingo grid logic (~200 lines)
-    ├── poker.js                # Poker selector logic (~150 lines)
-    ├── game-controls.js        # Reveal/Reset logic (~120 lines)
-    ├── ui.js                   # General UI helpers (~180 lines)
-    └── app.js                  # Main orchestrator (~180 lines)
+├── index.html              # All screens
+├── css/styles.css
+└── js/                     # api.js (REST client + GridUtils), app.js (everything else)
 ```
+
+The frontend deliberately uses two JS files; do not introduce a build step or split into
+ES modules without changing that decision explicitly.
 
 ---
 
-## Backend Code Standards
+## Python Standards
 
-### Python Style
-- **PEP 8 compliance** - Use black formatter for consistency
-- **Type hints** - All function signatures include type hints
-- **Docstrings** - Every class and function has a docstring
-- **Async/await** - Use async functions for I/O (aiohttp handlers, file I/O)
+### Style
+- **4-space indentation**, `snake_case` for functions and variables, `PascalCase` for
+  classes.
+- **Type hints on function signatures**, including `-> None` for procedures.
+- **Docstrings** on every module, class and public function; document `Args:` and
+  `Returns:` for anything non-trivial.
+- **Async/await for I/O.** All handlers are `async`, and all file reads/writes go through
+  `aiofiles`.
+- Private helpers are prefixed with `_` (`_save_to_disk`, `_broadcast`, `_serialize_session`).
 
-### Class Structure
+### Return conventions
+- Validators return `(is_valid: bool, error_message: str | None)`.
+- Manager methods return `(success: bool, error: str | None)` or
+  `(success: bool, error: str | None, data: dict | None)`.
+- Simple lookups (`get_user`, `get_room`) return the object or `None`.
+
 ```python
-class ClassName:
-    """One-line description of class."""
-    
-    def __init__(self):
-        """Initialize with docstring."""
-        pass
-    
-    def public_method(self) -> ReturnType:
-        """Docstring for public method."""
-        pass
-    
-    def _private_method(self) -> ReturnType:
-        """Docstring for private method."""
-        pass
-```
-
-### Error Handling
-- **All input validation** - Validate at entry points (routes)
-- **Try/except sparingly** - Only catch specific exceptions
-- **Return error objects** - Use (success: bool, data: any, error: str) tuple pattern
-- **HTTP status codes** - Use appropriate codes (400, 404, 409, 500)
-
-### Manager Classes
-- **Single responsibility** - Each manager handles one resource
-- **Persistence layer** - Managers handle read/write to JSON files
-- **In-memory cache** - Load all data on init, keep sync'd
-- **Public methods only** - No private "_internal" methods exposed in API
-
-### Example Manager
-```python
-class UserManager:
-    """Manages user profiles and persistence."""
-    
-    def __init__(self):
-        """Load all users from file on startup."""
-        self.users = {}
-        self._load_from_file()
-    
-    def user_exists(self, email: str) -> bool:
-        """Check if user already registered."""
-        return email in self.users
-    
-    def register_user(self, email: str, username: str) -> dict:
-        """Register new user or return existing."""
-        if self.user_exists(email):
-            return self.users[email]
-        
-        # Create new user
-        color = ColorPalette.assign_color_new()
-        user = {
-            "email": email,
-            "username": username,
-            "color": color,
-            "created_at": datetime.utcnow().isoformat()
-        }
-        self.users[email] = user
-        self._save_to_file()
-        return user
-    
-    def _load_from_file(self) -> None:
-        """Load users from users.json."""
-        pass
-    
-    def _save_to_file(self) -> None:
-        """Save users to users.json."""
-        pass
-```
-
-### Route Handlers
-- **One route per function** - Don't combine multiple routes
-- **Validation first** - Validate inputs immediately
-- **Error responses** - Return JSON error objects
-- **Consistent response format** - Use same JSON structure
-
-### Example Route
-```python
-async def create_room(request: web.Request) -> web.Response:
-    """POST /api/room - Create new room."""
-    try:
-        data = await request.json()
-    except (json.JSONDecodeError, ValueError):
-        return web.json_response(
-            {"error": "invalid_json", "message": "Invalid JSON body"},
-            status=400
-        )
-    
-    # Validate inputs
-    if not Validators.validate_room_name(data.get("name")):
-        return web.json_response(
-            {"error": "invalid_room_name", "message": "Name required, max 100 chars"},
-            status=400
-        )
-    
-    # Process
-    room_id = room_manager.create_room(...)
-    
-    # Return success
-    return web.json_response({
-        "room_id": room_id,
-        "status": "created"
-    }, status=201)
-```
-
----
-
-## Frontend Code Standards
-
-### JavaScript Style
-- **Vanilla JS only** - No frameworks, vanilla DOM manipulation
-- **ES6+ syntax** - Use const/let, arrow functions, template literals
-- **Module pattern** - Each file exports single object/function
-- **No global namespace pollution** - Use IIFE or module pattern
-
-### File Structure
-Each JS file should:
-```javascript
-/**
- * module-name.js - One sentence description
- */
-
-// Constants
-const CONSTANT_VALUE = "value";
-
-// Private functions (prefix with _)
-function _privateHelper() {
-  // ...
-}
-
-// Exported public function/object
-const ModuleName = {
-  init() {
-    // Initialize
-  },
-  
-  publicMethod() {
-    // Public method
-  }
-};
-```
-
-### State Management Pattern
-```javascript
-const appState = {
-  currentUser: null,
-  currentRoom: null,
-  
-  // Getters
-  getCurrentUser() {
-    return this.currentUser;
-  },
-  
-  // Setters
-  setCurrentUser(user) {
-    this.currentUser = user;
-    localStorage.setItem("bingopoker_user", JSON.stringify(user));
-  },
-  
-  // Actions
-  async registerUser(email, username) {
-    const response = await fetch("/api/user", {
-      method: "POST",
-      body: JSON.stringify({ email, username })
-    });
-    
-    if (!response.ok) {
-      throw new Error("Registration failed");
-    }
-    
-    const user = await response.json();
-    this.setCurrentUser(user);
-    return user;
-  }
-};
-```
-
-### Event Handling
-- **Event delegation** - Use event delegation for dynamic elements
-- **One handler per action** - Don't combine handlers
-- **Clear naming** - Handler names start with "handle" or "on"
-
-### Example Event Handler
-```javascript
-function handleBingoClick(event) {
-  const cell = event.target.closest("[data-cell-index]");
-  if (!cell) return;
-  
-  const cellIndex = parseInt(cell.dataset.cellIndex, 10);
-  const isSelected = cell.classList.contains("selected");
-  
-  // Toggle selection
-  if (isSelected) {
-    cell.classList.remove("selected");
-  } else {
-    cell.classList.add("selected");
-  }
-  
-  // Send to server
-  WebSocketClient.send({
-    type: "bingo_select",
-    cell: cellIndex,
-    selected: !isSelected
-  });
-}
-```
-
-### DOM Manipulation
-- **Use data attributes** - Store values in `data-*` attributes
-- **Class toggling** - Use classList for styling
-- **Template literals** - Build HTML with backticks
-- **Efficient updates** - Batch DOM updates, use DocumentFragment for lists
-
-### Example DOM Update
-```javascript
-function renderUserList(users) {
-  const container = document.getElementById("user-list");
-  const fragment = document.createDocumentFragment();
-  
-  users.forEach(user => {
-    const li = document.createElement("li");
-    li.className = "user-item";
-    li.style.borderColor = user.color;
-    li.innerHTML = `
-      <span class="color-indicator" style="background: ${user.color}"></span>
-      <span class="username">${user.username}</span>
-    `;
-    fragment.appendChild(li);
-  });
-  
-  container.innerHTML = ""; // Clear
-  container.appendChild(fragment);
-}
-```
-
-### CSS Naming
-- **BEM convention** - Block__Element--Modifier
-- **CSS variables** - Use :root variables for colors/spacing
-- **Mobile-first** - Base styles for mobile, media queries for larger screens
-- **Semantic classes** - Class names describe purpose, not appearance
-
-### Example CSS
-```css
-:root {
-  --color-primary: #FF6B6B;
-  --color-text: #2f2a21;
-  --spacing-unit: 8px;
-  --border-radius: 8px;
-}
-
-.bingo-grid {
-  display: grid;
-  grid-template-columns: repeat(5, 1fr);
-  gap: var(--spacing-unit);
-}
-
-.bingo-cell {
-  padding: var(--spacing-unit);
-  border-radius: var(--border-radius);
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.bingo-cell:hover {
-  transform: scale(1.05);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-}
-
-.bingo-cell--selected {
-  background: var(--color-primary);
-  color: white;
-}
-
-@media (max-width: 768px) {
-  .bingo-grid {
-    gap: 4px;
-  }
-}
-```
-
----
-
-## API Design Standards
-
-### REST Endpoints
-- **Resource-oriented** - URLs represent resources, not actions
-- **Standard methods** - GET (read), POST (create), PUT (update), DELETE (delete)
-- **Consistent paths** - `/api/{resource}` or `/api/{resource}/{id}`
-- **Status codes** - 200 (ok), 201 (created), 400 (bad request), 404 (not found), 500 (server error)
-
-### JSON Response Format
-```json
-{
-  "status": "success",
-  "data": { /* actual data */ }
-}
-```
-
-```json
-{
-  "status": "error",
-  "error": "error_code",
-  "message": "Human-readable message"
-}
-```
-
-### WebSocket Messages
-- **Type field required** - Every message must have `type` field
-- **Room ID required** - Include `room_id` for routing
-- **Timestamp optional** - Add for debugging/logging
-- **Structured payload** - Consistent format for each message type
-
----
-
-## Testing Standards
-
-### Backend Tests (pytest)
-- **One test per behavior** - Test single functionality per test
-- **Descriptive names** - `test_create_room_with_valid_config_succeeds`
-- **Arrange-Act-Assert** - Clear test structure
-- **Fixtures for setup** - Use pytest fixtures for common setup
-
-### Example Test
-```python
-@pytest.fixture
-def room_manager():
-    """Provide fresh RoomManager instance."""
-    return RoomManager()
-
-def test_create_room_with_valid_config_succeeds(room_manager):
-    """Test that valid room creation works."""
-    # Arrange
-    config = {"grid": [[...], [...], ..., [...], [...]]}
-    
-    # Act
-    room_id = room_manager.create_room("Test Room", config, "user@test.com")
-    
-    # Assert
-    assert room_id is not None
-    assert room_manager.load_room(room_id) is not None
-    assert room_manager.load_room(room_id)["name"] == "Test Room"
-```
-
-### Frontend Testing
-- **Manual end-to-end testing** - Test user flows in browser
-- **Console checks** - Verify no errors in browser console
-- **Network tab** - Verify correct API calls
-- **WebSocket inspection** - Check message format and timing
-
----
-
-## Documentation Standards
-
-### Inline Comments
-- **Explain WHY, not WHAT** - Code explains what, comments explain why
-- **Sparingly used** - Don't over-comment obvious code
-- **Complex logic only** - Comment tricky algorithms or business logic
-
-### Function Docstrings
-```python
-def register_user(self, email: str, username: str) -> dict:
+async def update_role(self, email: str, new_role: str) -> tuple[bool, Optional[str]]:
     """
-    Register a new user or return existing user profile.
-    
+    Update user's role.
+
     Args:
-        email: User email address (unique)
-        username: User display name
-    
+        email: User email address
+        new_role: New role ('worker' or 'observer')
+
     Returns:
-        User dict with {email, username, color, created_at}
-    
-    Raises:
-        ValueError: If email or username invalid
+        (success: bool, error: str | None)
     """
-    pass
 ```
 
-### README Files
-- **Keep documentation alongside code**
-- **Update docs when code changes**
-- **Link to relevant documentation**
-- **Include examples**
+### Managers
+- One manager per resource; managers own both the in-memory cache and the JSON file.
+- Data is loaded once during `startup_handler` and managers are stored on the app
+  (`app["user_manager"]`, `app["room_manager"]`). Do not create module-level singletons.
+- **All JSON persistence goes through the manager classes.** No other module opens
+  `users.json` or `rooms.json` (`routes/debug.py` is the one deliberate exception, and it
+  writes through the manager's own file paths).
+
+### Route handlers
+- One handler per route, registered in a `setup_*_routes(app)` function.
+- Validate inputs first and return early with a JSON error body.
+- Error responses use `{"error": "<code>", "message": "<human readable>"}` with status
+  400 (bad input), 403 (not the creator), 404 (not found), 409 (duplicate), 500 (server).
+- Catch `ValueError` for malformed JSON bodies; keep broad `except Exception` at the
+  handler boundary only.
+
+### Logging
+- Use the standard `logging` module with a module-level
+  `logger = logging.getLogger(__name__)`.
+- **Never use `print()`** for diagnostics. (`app.py`'s single startup banner is the only
+  intentional console write; `room_manager.load()` still has a legacy `print` that should
+  be converted when touched.)
+- **Never log an email address.** Log `user_id` and username instead. Access logging is
+  suppressed in `app.py` for the same reason.
+- `logger.info` for lifecycle events (registration, room created/deleted, join/leave),
+  `logger.warning` for recoverable faults, `logger.error` for failures, `logger.debug` for
+  noise like dropped sockets.
 
 ---
 
-## Version Control Standards
+## JavaScript Standards
 
-### Commit Messages
-- **Clear and descriptive** - "Add bingo cell selection handler"
-- **Present tense** - "Add" not "Added"
-- **Reference task** - "Task 1.7: Implement bingo selection"
-- **One logical change per commit**
+### Style
+- **4-space indentation**, `camelCase` for functions and variables, `PascalCase` for
+  classes and constant collections (`BingoPokerAPI`, `GridUtils`).
+- **Vanilla ES6+ only** — `const`/`let`, arrow functions, template literals, optional
+  chaining. No frameworks, no npm, no bundler.
+- JSDoc-style block comments on API methods and non-obvious helpers.
+- State lives in the single `appState` object; screen changes go through `showScreen()`.
 
-### Branch Strategy
-- **Main branch** - Always deployable, tested code
-- **Feature branches** - One task per branch
-- **Branch naming** - `task-1-7-bingo-selection`
+### API layer
+`api.js` methods never throw at the call site — they return `{ success: true, data }` or
+`{ success: false, error }` and log the failure with `console.error`. Callers branch on
+`result.success`.
 
----
+### DOM safety
+- **Escape all user-supplied text with `escapeHtml()` before inserting it into the DOM.**
+  This applies to usernames, room names and grid cell text.
+- **Never interpolate user-supplied text into inline event-handler attributes.** Inline
+  `onclick` handlers may only receive server-generated values such as `room_id` or a
+  share URL; anything a user typed must be rendered as text content or passed through a
+  `addEventListener` closure.
+- Prefer `document.createElement` + `textContent` for user data (see `renderBingoGrid`);
+  template literals are acceptable for static markup.
 
-## Performance Guidelines
-
-### Backend
-- **Lazy load** - Load room configs on-demand, not all at startup
-- **Batch broadcasts** - Group related updates in single message
-- **Room cleanup** - Remove empty rooms from memory after timeout
-- **Limit broadcasts** - Only send to clients in specific room
-
-### Frontend
-- **Debounce events** - Debounce rapid cell clicks (100ms)
-- **Cache DOM queries** - Store frequently accessed DOM nodes
-- **Lazy render** - Only render visible elements
-- **Minimize reflows** - Batch DOM changes
-
----
-
-## Security Guidelines
-
-### Input Validation
-- **All inputs validated** - Never trust client input
-- **Server-side validation** - Always validate on backend
-- **Sanitize output** - Escape HTML in user-provided text
-- **Length limits** - Enforce max lengths for all fields
-
-### Data Protection
-- **No sensitive data in localStorage** - Only non-sensitive user profile
-- **HTTPS in production** - Always use secure WebSocket (WSS)
-- **Rate limiting** - Limit requests per user (future enhancement)
-- **No credentials in URLs** - Never pass auth info in query params
+### Events
+- Handler names start with `handle` (`handleRegister`, `handleCreateRoom`, `handleReveal`).
+- Wire form and button listeners once in `setupEventListeners()`.
+- WebSocket sends go through `wsSend(type, payload)`; incoming messages are dispatched in
+  a single `switch` in `handleWsMessage`.
 
 ---
 
-## Error Handling Standards
+## CSS Standards
 
-### Backend Errors
-- **Validate first** - Check inputs before processing
-- **Specific errors** - Return specific error codes (invalid_email, room_not_found, etc.)
-- **Log errors** - Log all errors for debugging
-- **Safe responses** - Never expose internal errors to client
-
-### Frontend Errors
-- **User-friendly messages** - Show helpful error messages
-- **Error recovery** - Provide way to recover (retry, cancel, etc.)
-- **Console logging** - Log to console for debugging
-- **Toast/modal display** - Show errors prominently
+- **Theme values live in `:root` custom properties** in `frontend/css/styles.css`; use
+  `var(--...)` instead of hard-coded colors.
+- Semantic, hyphenated class names describing purpose (`.bingo-cell`, `.room-card`,
+  `.user-status`), with state modifiers as separate classes (`.selected`, `.frozen`,
+  `.active`, `.hidden`).
+- Responsive rules use media queries at the end of the relevant section.
+- Bump the `?v=` query string on the `<link>`/`<script>` tags in `index.html` when
+  shipping CSS or JS changes.
 
 ---
 
-## Dependency Management
+## API Design
 
-### Backend Dependencies
-- **Minimal** - Only essential libraries (aiohttp, pytest)
-- **Well-maintained** - Choose active, popular libraries
-- **Version pinning** - Pin versions in requirements.txt for reproducibility
+### REST
+- Resource-oriented paths: `/api/user`, `/api/user/{email}`, `/api/room`,
+  `/api/room/{room_id}`, `/api/rooms`.
+- Standard verbs: `POST` create, `GET` read, `PUT` update, `DELETE` delete.
+- Status codes: 200 ok, 201 created, 400 bad request, 401 unauthenticated socket,
+  403 forbidden, 404 not found, 409 conflict, 500 server error.
+- Success bodies return the resource directly (`{"user": {...}}`, `{"rooms": [...]}`);
+  error bodies use `{"error", "message"}`.
 
-### Frontend Dependencies
-- **Zero external JS** - Use vanilla JavaScript only
-- **Minimal CSS** - Write custom CSS, no CSS frameworks initially
-- **No build step** - Should work without bundling/transpiling
-
----
-
-## Deployment Checklist
-
-Before deploying:
-- [ ] All tests pass
-- [ ] No console errors in browser
-- [ ] API endpoints tested manually
-- [ ] WebSocket messages verified
-- [ ] JSON files properly persisted
-- [ ] Error cases handled
-- [ ] Performance acceptable (< 2s page load)
-- [ ] Mobile responsive verified
-- [ ] Documentation updated
+### WebSocket
+- Every message is `{"type": "<name>", "payload": {...}}` in both directions.
+- Room and user are bound by the connection URL `/ws/{room_id}/{user_email}`; they are not
+  repeated in payloads.
+- Unknown message types get an `error` message back rather than silent failure.
+- Cell coordinates are stored as tuples server-side and serialized to `[row, col]` lists.
 
 ---
 
-## Review Checklist (User Oversight)
+## Data & Security
 
-Before approving code:
-- [ ] Follows this coding rules document
-- [ ] File sizes reasonable (~300 lines max)
-- [ ] Clear separation of concerns
-- [ ] Proper error handling
-- [ ] Tests included for critical paths
-- [ ] Documentation clear and updated
-- [ ] No unnecessary complexity
-- [ ] Performance acceptable
+- **Never persist an email in plain text.** `users.json` is keyed by a random `uuid4` hex
+  ID and stores an HMAC-SHA256 `email_hash`. `rooms.json` stores `created_by` as a user ID.
+- **Validate every input server-side**, even when the frontend already checks it.
+- Enforce length limits: username 1–50, room name 1–100, grid strictly 5×5 strings, poker
+  values restricted to `0, 1, 2, 3, 5, 8, 13, 21, split`.
+- Only non-sensitive profile data goes in `localStorage` (`bingopoker_user`).
+- Destructive debug routes must stay behind the `DEBUG` flag.
+- Use `wss://` automatically when the page is served over HTTPS (`connectWebSocket`
+  already derives the scheme from `location.protocol`).
 
 ---
 
-*Last Updated: 2026-08-12*
+## Documentation
+
+- Comments explain **why**, not what, and stay to a single line where possible.
+- Keep the markdown docs in the repository root in sync when behaviour changes.
+- Python docstrings follow the `Args:` / `Returns:` form used throughout `utils/`.
+
+---
+
+## Testing
+
+There is no automated test suite and no test runner configuration in the repository.
+`backend/tests/` contains only an empty `__init__.py`. Until that changes, verification is
+manual: exercise registration, room creation, multi-user join, reveal and reset in the
+browser, and check `backend/logs/bingopoker.log` and the DevTools console for errors.
+
+If tests are added, place them in `backend/tests/`, use `pytest` with
+`pytest-aiohttp` (already declared in `backend/requirements-dev.txt`), name them
+`test_<behaviour>`, and follow Arrange-Act-Assert.
+
+> This repository has no linter, formatter, pre-commit hook or CI configuration. Style
+> rules above are enforced by review, not tooling.
+
+---
+
+## Review Checklist
+
+- [ ] Follows the conventions in this document
+- [ ] Inputs validated server-side, user text escaped before DOM insertion
+- [ ] No email in logs, no plain email persisted
+- [ ] Managers own all JSON reads/writes
+- [ ] Errors returned as structured JSON with an appropriate status code
+- [ ] Docs updated if behaviour changed
+- [ ] Manually verified in the browser (no console errors)
+
+---
+
+*Last Updated: 2026-08-18*

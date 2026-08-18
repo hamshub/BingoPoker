@@ -1,16 +1,19 @@
-"""Room REST API and WebSocket routes.
+"""Room REST API routes.
 
-Endpoints (REST):
+Endpoints:
 - POST /api/room - Create new room
 - GET /api/room/{room_id} - Get room state
-- GET /api/rooms - List active rooms
+- GET /api/rooms - List all rooms
+- DELETE /api/room/{room_id} - Delete a room (creator only)
 
-WebSocket:
-- WS /ws/{room_id}/{user_email} - Join room session
+The WebSocket endpoint lives in handlers/websocket.py.
 """
 
+import logging
 from aiohttp import web
 from utils.validators import Validators
+
+logger = logging.getLogger(__name__)
 
 
 async def create_room_handler(request: web.Request) -> web.Response:
@@ -50,6 +53,13 @@ async def create_room_handler(request: web.Request) -> web.Response:
                 {"error": "invalid_input", "message": "created_by (email) required"},
                 status=400
             )
+
+        creator_id = request.app["user_manager"].resolve_user_id(created_by)
+        if not creator_id:
+            return web.json_response(
+                {"error": "user_not_found", "message": "Creator is not a registered user"},
+                status=404
+            )
         
         # Create room
         room_manager = request.app["room_manager"]
@@ -62,7 +72,7 @@ async def create_room_handler(request: web.Request) -> web.Response:
                 status=409
             )
 
-        success, error, room_data = await room_manager.create_room(name, grid, created_by)
+        success, error, room_data = await room_manager.create_room(name, grid, creator_id)
 
         if not success:
             return web.json_response(
@@ -71,6 +81,7 @@ async def create_room_handler(request: web.Request) -> web.Response:
             )
 
         room_id = room_data["room_id"]
+        logger.info(f"Room created: {room_id} ('{name}' by user {creator_id})")
 
         return web.json_response({
             "room_id": room_id,
@@ -147,7 +158,7 @@ async def list_rooms_handler(request: web.Request) -> web.Response:
                 "name": "Room Name",
                 "user_count": 3,
                 "created_at": "2026-08-12T10:00:00",
-                "created_by": "creator@example.com"
+                "created_by": "<user_id>"
             },
             ...
         ]
@@ -185,17 +196,69 @@ async def list_rooms_handler(request: web.Request) -> web.Response:
         )
 
 
-async def room_websocket_handler(request: web.Request) -> web.WebSocketResponse:
+async def delete_room_handler(request: web.Request) -> web.Response:
     """
-    WebSocket /ws/{room_id}/{user_email} - Join room session.
+    DELETE /api/room/{room_id} - Delete a room.
     
-    Handles real-time room updates, user joins/leaves, selections, etc.
-    TODO: Implement full WebSocket handling (Task 1.9)
+    Request body: {"created_by": "creator@example.com"}
+    Response: {"message": "Room deleted successfully"}
     """
     try:
+        room_id = request.match_info.get("room_id")
+        data = await request.json()
+        created_by = data.get("created_by")
+        
+        # Validate room_id format
+        valid, error = Validators.validate_room_id(room_id)
+        if not valid:
+            return web.json_response(
+                {"error": "invalid_room_id", "message": error},
+                status=400
+            )
+        
+        if not created_by:
+            return web.json_response(
+                {"error": "invalid_input", "message": "created_by (email) required"},
+                status=400
+            )
+        
+        requester_id = request.app["user_manager"].resolve_user_id(created_by)
+        room_manager = request.app["room_manager"]
+        
+        # Get room configuration
+        room_config = await room_manager.get_room(room_id)
+        if not room_config:
+            return web.json_response(
+                {"error": "room_not_found", "message": f"Room {room_id} not found"},
+                status=404
+            )
+        
+        # Check if requester is the creator
+        if not requester_id or room_config.get("created_by") != requester_id:
+            return web.json_response(
+                {"error": "unauthorized", "message": "Only the room creator can delete this room"},
+                status=403
+            )
+        
+        # Delete room
+        success, error = await room_manager.delete_room(room_id)
+        
+        if not success:
+            return web.json_response(
+                {"error": "deletion_failed", "message": error},
+                status=400
+            )
+        
+        logger.info(f"Room deleted: {room_id} ('{room_config.get('name')}' by user {requester_id})")
+        
+        return web.json_response({
+            "message": "Room deleted successfully"
+        }, status=200)
+    
+    except ValueError:
         return web.json_response(
-            {"error": "not_implemented", "message": "WebSocket support coming soon"},
-            status=501
+            {"error": "invalid_json", "message": "Invalid JSON in request body"},
+            status=400
         )
     except Exception as e:
         return web.json_response(
@@ -208,3 +271,4 @@ def setup_room_routes(app: web.Application) -> None:
     app.router.add_post("/api/room", create_room_handler)
     app.router.add_get("/api/room/{room_id}", get_room_handler)
     app.router.add_get("/api/rooms", list_rooms_handler)
+    app.router.add_delete("/api/room/{room_id}", delete_room_handler)

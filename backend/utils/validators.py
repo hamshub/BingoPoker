@@ -23,8 +23,6 @@ class ValidationError:
     ROOM_ID_INVALID = (False, "Room ID format is invalid")
     ROOM_ID_REQUIRED = (False, "Room ID is required")
     GRID_INVALID = (False, "Grid must be 5x5 array of strings")
-    CELL_TEXT_REQUIRED = (False, "Cell text is required")
-    CELL_TEXT_TOO_LONG = (False, "Cell text must be 50 characters or less")
     POKER_VALUE_INVALID = (False, "Poker value must be one of: 0, 1, 2, 3, 5, 8, 13, 21, split")
     POKER_VALUE_REQUIRED = (False, "Poker value is required")
 
@@ -42,7 +40,6 @@ class Validators:
     USERNAME_MAX_LENGTH = 50
     ROOM_NAME_MIN_LENGTH = 1
     ROOM_NAME_MAX_LENGTH = 100
-    CELL_TEXT_MAX_LENGTH = 50
     GRID_SIZE = 5
 
     @staticmethod

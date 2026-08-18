@@ -8,6 +8,7 @@ from aiohttp import web
 async def delete_users_handler(request: web.Request) -> web.Response:
     user_manager = request.app["user_manager"]
     user_manager.users = {}
+    user_manager._by_email_hash = {}
     async with aiofiles.open(user_manager.users_file, "w") as f:
         await f.write(json.dumps({}))
     return web.json_response({"message": "All users deleted"})
