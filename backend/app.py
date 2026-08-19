@@ -8,6 +8,7 @@ import os
 import logging
 from aiohttp import web
 from dotenv import load_dotenv
+from pathlib import Path
 
 from utils.user_manager import UserManager
 from utils.room_manager import RoomManager
@@ -21,17 +22,20 @@ from handlers.websocket import room_websocket_handler
 load_dotenv()
 
 # Configuration
+
+
 HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "8081"))
 DEBUG = os.getenv("DEBUG", "False").lower() == "true"
-DATA_DIR = os.getenv(
-    "DATA_DIR",
-    os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
-)
-# Relative paths are resolved against app.py's directory, not CWD
-if not os.path.isabs(DATA_DIR):
-    DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), DATA_DIR)
 
+DATA_DIR = Path(
+    os.getenv(
+        "DATA_DIR",
+        Path(__file__).resolve().parent / "data"
+    )
+)
+
+DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 def _setup_logging(data_dir: str) -> None:
     """
