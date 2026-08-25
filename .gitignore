@@ -50,3 +50,4 @@ Thumbs.db
 *.log
 backend/logs/
 backend/data/
+.vs/
