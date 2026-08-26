@@ -37,15 +37,16 @@ BingoPoker is a collaborative web-based application designed for agile teams dur
 
 ```
 BingoPoker/
-├── README.md                 # This file
-├── ARCHITECTURE.md           # System design and component overview
-├── DATA_STRUCTURES.md        # JSON schemas and data formats
-├── USER_FLOW.md              # Step-by-step user interaction flow
-├── API_SPECIFICATIONS.md     # REST endpoints and WebSocket messages
-├── DEVELOPMENT.md            # Setup and development guide
-├── CODING_RULES.md           # Conventions this codebase follows
-├── IMPLEMENTATION_TASKS.md   # Build status and outstanding work
-├── STARTUP.md                # Deployment and hosting guide
+├── docs/
+│   ├── README.md                 # This file
+│   ├── ARCHITECTURE.md           # System design and component overview
+│   ├── DATA_STRUCTURES.md        # JSON schemas and data formats
+│   ├── USER_FLOW.md              # Step-by-step user interaction flow
+│   ├── API_SPECIFICATIONS.md     # REST endpoints and WebSocket messages
+│   ├── DEVELOPMENT.md            # Setup and development guide
+│   ├── CODING_RULES.md           # Conventions this codebase follows
+│   ├── IMPLEMENTATION_TASKS.md   # Build status and outstanding work
+│   └── STARTUP.md                # Deployment and hosting guide
 │
 ├── backend/
 │   ├── app.py                # aiohttp app factory, routes, startup, logging
@@ -95,7 +96,7 @@ BingoPoker/
 
 ## Quick Start
 
-See [STARTUP.md](STARTUP.md) for detailed startup instructions.
+See [STARTUP.md](docs/STARTUP.md) for detailed startup instructions.
 
 ```bash
 # Install dependencies (one time)
@@ -134,15 +135,15 @@ http://localhost:8081
 
 ## File Documentation
 
-- [STARTUP.md](STARTUP.md) - How to launch the app (shared hosting & local)
-- [ARCHITECTURE.md](ARCHITECTURE.md) - System components and data flow
-- [DATA_STRUCTURES.md](DATA_STRUCTURES.md) - JSON schemas and file formats
-- [USER_FLOW.md](USER_FLOW.md) - Detailed interaction flows
-- [API_SPECIFICATIONS.md](API_SPECIFICATIONS.md) - REST endpoints and WebSocket messages
-- [DEVELOPMENT.md](DEVELOPMENT.md) - Development setup and manual test guide
-- [CODING_RULES.md](CODING_RULES.md) - Conventions this codebase follows
-- [IMPLEMENTATION_TASKS.md](IMPLEMENTATION_TASKS.md) - Build status and outstanding work
+- [STARTUP.md](docs/STARTUP.md) - How to launch the app (shared hosting & local)
+- [ARCHITECTURE.md](docs/ARCHITECTURE.md) - System components and data flow
+- [DATA_STRUCTURES.md](docs/DATA_STRUCTURES.md) - JSON schemas and file formats
+- [USER_FLOW.md](docs/USER_FLOW.md) - Detailed interaction flows
+- [API_SPECIFICATIONS.md](docs/API_SPECIFICATIONS.md) - REST endpoints and WebSocket messages
+- [DEVELOPMENT.md](docs/DEVELOPMENT.md) - Development setup and manual test guide
+- [CODING_RULES.md](docs/CODING_RULES.md) - Conventions this codebase follows
+- [IMPLEMENTATION_TASKS.md](docs/IMPLEMENTATION_TASKS.md) - Build status and outstanding work
 
 ---
 
-*Last Updated: 2026-08-18*
+*Last Updated: 2026-08-26*

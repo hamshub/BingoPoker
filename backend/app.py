@@ -164,6 +164,8 @@ def create_app() -> web.Application:
     # Static files served directly under /css and /js
     frontend_path = os.path.join(os.path.dirname(__file__), "..", "frontend")
     app.router.add_static("/css", os.path.join(frontend_path, "css"))
+    app.router.add_static("/imgs", os.path.join(frontend_path, "imgs")
+)
     app.router.add_static("/js", os.path.join(frontend_path, "js"))
     app.router.add_static("/templates", os.path.join(frontend_path, "templates"))
 
