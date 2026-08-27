@@ -1,0 +1,19 @@
+services:
+  bingopoker:
+    image: ghcr.io/hamshub/bingopoker:latest
+
+    container_name: bingopoker
+
+    restart: unless-stopped
+
+    ports:
+      - "40550:8081"
+
+    environment:
+      HOST: "0.0.0.0"
+      PORT: "8081"
+      DEBUG: "False"
+      DATA_DIR: "/app/data"
+
+    volumes:
+      - /share/Container/bingopoker/data:/app/data
