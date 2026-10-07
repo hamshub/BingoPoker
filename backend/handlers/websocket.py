@@ -1,9 +1,10 @@
 """WebSocket handler for BingoPoker real-time room sessions.
 
 Manages the full lifecycle of a WebSocket connection:
-join, bingo_select, poker_select, reveal, reset, disconnect.
+join, bingo_select, poker_select, ready_toggle, auto_reveal_set, reveal, reset, disconnect.
 """
 
+import asyncio
 import json
 import logging
 from aiohttp import web, WSMsgType
@@ -21,6 +22,7 @@ async def room_websocket_handler(request: web.Request) -> web.WebSocketResponse:
 
     user_manager = request.app["user_manager"]
     room_manager = request.app["room_manager"]
+    analytics = request.app["analytics_manager"]
 
     # Validate user and room exist
     user = await user_manager.get_user(email)
@@ -56,6 +58,7 @@ async def room_websocket_handler(request: web.Request) -> web.WebSocketResponse:
 
     # Broadcast updated users list to everyone else
     users = room_manager.sessions[room_id]["users"]
+    await analytics.record_join(user_id, len(users))
     await _broadcast(room_id, {
         "type": "user_joined",
         "payload": {"users": users},
@@ -64,13 +67,17 @@ async def room_websocket_handler(request: web.Request) -> web.WebSocketResponse:
     try:
         async for msg in ws:
             if msg.type == WSMsgType.TEXT:
-                await _handle_message(ws, room_id, email, msg.data, room_manager)
+                await _handle_message(ws, room_id, email, msg.data, room_manager, analytics)
             elif msg.type in (WSMsgType.ERROR, WSMsgType.CLOSE):
                 break
     except Exception as e:
         logger.warning(f"WebSocket error for user {user_id} in room {room_id}: {type(e).__name__}: {e}")
     finally:
-        await _disconnect(room_id, email, room_manager, room_name, user_id)
+        # aiohttp cancels the handler when the peer drops; shield so cleanup and
+        # the follow-up broadcasts (user_left, auto-reveal) always run to completion
+        await asyncio.shield(
+            _disconnect(room_id, email, room_manager, analytics, room_name, user_id)
+        )
 
     return ws
 
@@ -81,6 +88,7 @@ async def _handle_message(
     email: str,
     raw: str,
     room_manager,
+    analytics,
 ) -> None:
     try:
         msg = json.loads(raw)
@@ -118,18 +126,26 @@ async def _handle_message(
                 "payload": {"email": email, "has_selection": True},
             })
 
-    elif msg_type == "reveal":
-        success, _ = await room_manager.reveal_round(room_id)
+    elif msg_type == "ready_toggle":
+        success, _ = await room_manager.toggle_ready(room_id, email)
         if success:
-            session = room_manager.sessions[room_id]
-            bingo = {e: [list(c) for c in cells] for e, cells in session["bingo_selections"].items()}
             await _broadcast(room_id, {
-                "type": "revealed",
-                "payload": {
-                    "bingo_selections": bingo,
-                    "poker_selections": session["poker_selections"],
-                },
+                "type": "ready_updated",
+                "payload": {"ready": room_manager.sessions[room_id]["ready"]},
             })
+            await _maybe_auto_reveal(room_id, room_manager, analytics)
+
+    elif msg_type == "auto_reveal_set":
+        success, _ = await room_manager.set_auto_reveal(room_id, payload.get("enabled"))
+        if success:
+            await _broadcast(room_id, {
+                "type": "auto_reveal_updated",
+                "payload": {"enabled": room_manager.sessions[room_id]["auto_reveal"]},
+            })
+            await _maybe_auto_reveal(room_id, room_manager, analytics)
+
+    elif msg_type == "reveal":
+        await _reveal(room_id, room_manager, analytics)
 
     elif msg_type == "reset":
         success, _ = await room_manager.reset_round(room_id)
@@ -140,26 +156,75 @@ async def _handle_message(
         await ws.send_json({"type": "error", "payload": {"message": f"Unknown type: {msg_type}"}})
 
 
+async def _reveal(room_id: str, room_manager, analytics, auto: bool = False) -> None:
+    """Reveal the round and broadcast every participant's selections."""
+    already_revealed = room_manager.sessions.get(room_id, {}).get("revealed", False)
+    success, _ = await room_manager.reveal_round(room_id)
+    if success:
+        session = room_manager.sessions[room_id]
+        # Repeated reveal clicks re-broadcast but are only counted once
+        if not already_revealed:
+            await analytics.record_reveal(
+                session["poker_selections"].values(), len(session["users"]), auto
+            )
+        bingo = {e: [list(c) for c in cells] for e, cells in session["bingo_selections"].items()}
+        await _broadcast(room_id, {
+            "type": "revealed",
+            "payload": {
+                "bingo_selections": bingo,
+                "poker_selections": session["poker_selections"],
+            },
+        })
+
+
+async def _maybe_auto_reveal(room_id: str, room_manager, analytics) -> None:
+    """Reveal the round if auto-reveal is on and every participant is ready."""
+    if room_manager.should_auto_reveal(room_id):
+        await _reveal(room_id, room_manager, analytics, auto=True)
+
+
+# A client that cannot accept a message within this time is treated as dead
+_SEND_TIMEOUT_SECONDS = 5
+
+
 async def _broadcast(room_id: str, message: dict, exclude: str = None) -> None:
+    """Send a message to every open socket in a room concurrently, pruning dead ones."""
+    # Snapshot: connections may join or leave while the sends are awaited
+    targets = [
+        (email, ws) for email, ws in _connections.get(room_id, {}).items()
+        if email != exclude
+    ]
+    if not targets:
+        return
+
+    results = await asyncio.gather(
+        *(_send(ws, message) for _, ws in targets),
+        return_exceptions=True,
+    )
+
     room_conns = _connections.get(room_id, {})
-    dead = []
-    for email, ws in room_conns.items():
-        if email == exclude:
-            continue
-        if ws.closed:
-            dead.append(email)
-            continue
-        try:
-            await ws.send_json(message)
-        except Exception as e:
-            logger.debug(f"Failed to send message in {room_id}: {type(e).__name__}")
-            dead.append(email)
-    for email in dead:
-        room_conns.pop(email, None)
+    for (email, ws), result in zip(targets, results):
+        if isinstance(result, BaseException) or ws.closed:
+            if isinstance(result, BaseException):
+                logger.debug(f"Failed to send message in {room_id}: {type(result).__name__}")
+            # Only prune if a reconnect hasn't already replaced this socket
+            if room_conns.get(email) is ws:
+                room_conns.pop(email, None)
+
+
+async def _send(ws: web.WebSocketResponse, message: dict) -> None:
+    if ws.closed:
+        raise ConnectionResetError("socket closed")
+    await asyncio.wait_for(ws.send_json(message), _SEND_TIMEOUT_SECONDS)
 
 
 async def _disconnect(
-    room_id: str, email: str, room_manager, room_name: str = None, user_id: str = None
+    room_id: str,
+    email: str,
+    room_manager,
+    analytics,
+    room_name: str = None,
+    user_id: str = None,
 ) -> None:
     _connections.get(room_id, {}).pop(email, None)
     if not _connections.get(room_id):
@@ -179,6 +244,8 @@ async def _disconnect(
         "type": "user_left",
         "payload": {"email": email, "users": remaining},
     })
+    # The last unready participant leaving can complete the ready set
+    await _maybe_auto_reveal(room_id, room_manager, analytics)
 
 
 def _serialize_session(session: dict) -> dict:

@@ -1,6 +1,7 @@
 services:
   bingopoker:
-    image: ghcr.io/hamshub/bingopoker:latest
+    # Set BINGOPOKER_IMAGE in the .env file next to this compose file (see .env.example)
+    image: ${BINGOPOKER_IMAGE:?Set BINGOPOKER_IMAGE in .env}
 
     container_name: bingopoker
 
@@ -9,11 +10,56 @@ services:
     ports:
       - "40550:8081"
 
+    # Every variable in .env (e.g. ADMIN_PASSWORD) is passed into the container,
+    # so new settings only need a .env edit. The fixed values below take precedence.
+    env_file:
+      - .env
+
     environment:
       HOST: "0.0.0.0"
       PORT: "8081"
       DEBUG: "False"
       DATA_DIR: "/app/data"
+      LOG_DIR: "/app/data/logs"
 
     volumes:
       - /share/Container/bingopoker/data:/app/data
+
+    # Opt in to automatic updates by the watchtower service below
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+
+  caddy:
+    image: caddy:2
+
+    container_name: bingopoker-caddy
+
+    restart: unless-stopped
+
+    ports:
+      - "4080:80"
+      - "4443:443"
+
+    volumes:
+      - /share/Container/bingopoker/Caddyfile:/etc/caddy/Caddyfile:ro
+      - /share/Container/bingopoker/caddy/data:/data
+      - /share/Container/bingopoker/caddy/config:/config
+
+    depends_on:
+      - bingopoker
+
+  # Pulls new ghcr.io images pushed by the GitHub Action and recreates the container
+  watchtower:
+    image: nickfedor/watchtower:latest
+
+    container_name: bingopoker-watchtower
+
+    restart: unless-stopped
+
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+
+    environment:
+      WATCHTOWER_LABEL_ENABLE: "true"    # only update containers with the enable label
+      WATCHTOWER_POLL_INTERVAL: "300"    # check for a new image every 5 minutes
+      WATCHTOWER_CLEANUP: "true"         # remove the replaced image after updating

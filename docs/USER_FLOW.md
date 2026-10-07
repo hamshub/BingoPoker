@@ -152,8 +152,9 @@ Room screen loads with:
         ├─ Room name and copyable invite link (built client-side from location.origin + ?r={room_id})
         ├─ "Download Config" button that exports the grid as JSON in the same shape the import accepts
         ├─ Current user info (username, session color — assigned on join, see Flow 4)
-        ├─ Poker card selector (0, 1, 2, 3, 5, 8, 13, 21, split)
-        ├─ Reveal All button (ENABLED)
+        ├─ Poker card selector (☕, 0, 1, 2, 3, 5, 8, 13, 21, split) with ☕ preselected
+        ├─ Green "Ready" toggle button under the poker cards
+        ├─ Reveal All button (ENABLED) with an "Auto-reveal when everyone is ready" checkbox below
         └─ Reset Round button (DISABLED)
 ```
 
@@ -227,9 +228,9 @@ Success: Show room screen
 - Room screen with:
   - Game header: room name, copyable invite link, "Download Config" button, username badge with session color dot, and "Leave Room" button
   - 5×5 Bingo grid (ready to click) on the left
-  - Round Controls (Reveal All / Reset Round) on the right
-  - Participant list with colors, role badges, and vote status
-  - Poker value buttons (0, 1, 2, 3, 5, 8, 13, 21, split)
+  - Round Controls (Reveal All / Reset Round, Auto-reveal checkbox) on the right
+  - Participant list with colors, role badges, ready ticks, and vote status
+  - Poker value buttons (☕, 0, 1, 2, 3, 5, 8, 13, 21, split) and the green Ready button
 
 ---
 
@@ -280,7 +281,7 @@ Cell now displays:
 - Each cell shows:
   - Cell text (from config)
   - Small colored circle(s) in corner indicating selections
-  - Hover effect
+  - Hover effect (cells are updated in place, so other users' clicks never replay the hover animation on the cell under your cursor)
   - Click feedback (change cursor to pointer)
 
 ---
@@ -290,10 +291,10 @@ Cell now displays:
 ### Scenario: User selects their story point estimate
 
 ```
-User is viewing the room
+User is viewing the room (☕ is preselected as the default estimate)
         ↓
 User clicks on a poker value button
-        ├─ Options: 0, 1, 2, 3, 5, 8, 13, 21, split
+        ├─ Options: ☕, 0, 1, 2, 3, 5, 8, 13, 21, split
         ↓
 [CLIENT] Check if revealed
         ├─ If revealed: Don't allow change
@@ -307,7 +308,7 @@ If user previously selected a value:
         └─ Visual feedback (border, background color, etc.)
         ↓
 [CLIENT] Send WebSocket message "poker_select"
-        └─ payload: { value: "0" | "1" | "2" | "3" | "5" | "8" | "13" | "21" | "split" }
+        └─ payload: { value: "coffee" | "0" | "1" | "2" | "3" | "5" | "8" | "13" | "21" | "split" }
         ↓
 [SERVER] Receive "poker_select"
         ├─ Overwrite the user's poker_selections entry (hidden from other users)
@@ -316,20 +317,83 @@ If user previously selected a value:
         ↓
 [CLIENT] All clients receive "poker_updated"
         ├─ Re-render the participant list
-        ├─ Show that user's status as "ready"
+        ├─ Show that user's status as "voted" (an explicit ☕ counts as a vote)
         └─ Do NOT show the actual value (hidden until reveal)
         ↓
 Poker selector shows:
         ├─ User's own selection highlighted
-        ├─ Other users' values hidden ("ready" or "waiting" only)
+        ├─ Other users' values hidden ("voted" or "waiting" only)
         └─ All buttons remain clickable until reveal
 ```
 
 ### UI Components
 - Poker value button row
-- 9 buttons: "0", "1", "2", "3", "5", "8", "13", "21", "split"
+- 10 buttons in two rows: "☕", "0", "1", "2", "3" / "5", "8", "13", "21", "split"
+- ☕ is highlighted by default; until a card is clicked the user shows as "waiting". Clicking ☕ explicitly counts as voted. ☕ is never counted in the average
 - Selected state: highlighted/active styling
-- Participant list showing "ready" / "waiting" per user
+- Participant list showing "voted" / "waiting" per user
+
+---
+
+## Flow 6b: Marking Yourself Ready
+
+### Scenario: User signals they are done with the current round
+
+```
+User is viewing the room (before reveal)
+        ↓
+User clicks the green "Ready" button under Your Estimate
+        ↓
+[CLIENT] Send WebSocket message "ready_toggle"
+        └─ payload: {}
+        ↓
+[SERVER] Receive "ready_toggle"
+        ├─ Add the user's email to session.ready, or remove it if already there
+        └─ Broadcast "ready_updated" { ready: [emails] } to all users in room
+        ↓
+[CLIENT] All clients receive "ready_updated"
+        ├─ Show a green ✓ next to each ready user's name in the participant list
+        └─ The clicking user's button switches to a filled "✓ Ready" (or back to "Ready")
+        ↓
+Clicking again toggles the user back to not ready
+        ↓
+If Auto-reveal is ticked and every participant is now ready:
+        └─ [SERVER] Reveals the round automatically (continue with Flow 7 from "Receive reveal")
+```
+
+Ready ticks are visible to everyone at all times, so the team can see when all participants are done. The Ready button is disabled after reveal (ticks stay visible), and all ticks are cleared on reset or when a user leaves.
+
+### UI Components
+- Full-width green "Ready" button below the poker cards (outlined when off, filled when on)
+- Green ✓ next to ready participants' names
+
+---
+
+## Flow 6c: Auto-reveal
+
+### Scenario: The team wants the round to reveal itself once everyone is ready
+
+```
+Any participant ticks "Auto-reveal when everyone is ready" under Reveal All
+        ↓
+[CLIENT] Send WebSocket message "auto_reveal_set"
+        └─ payload: { enabled: true }   (unticking sends enabled: false)
+        ↓
+[SERVER] Store session.auto_reveal and broadcast "auto_reveal_updated" { enabled }
+        ↓
+[CLIENT] All clients tick/untick the checkbox — the setting is shared by the whole room
+        ↓
+[SERVER] Reveals the round automatically when auto-reveal is on, the round is not yet
+         revealed, and every participant in the room is ready. This is checked:
+        ├─ after any user toggles Ready
+        ├─ right after auto-reveal is switched on (everyone may already be ready)
+        └─ when a participant leaves (the last unready user leaving completes the set)
+```
+
+The setting stays on across Reset Round and lasts until the last participant leaves the room. Observers are participants too, so they must also be ready.
+
+### UI Components
+- "Auto-reveal when everyone is ready" checkbox below the Reveal All / Reset Round buttons
 
 ---
 
@@ -340,7 +404,7 @@ Poker selector shows:
 ```
 User is viewing the room (before reveal)
         ↓
-User clicks "Reveal All" button
+User clicks "Reveal All" button (or auto-reveal fires — see Flow 6c)
         ├─ Button is ENABLED before reveal
         └─ Button is DISABLED after reveal
         ↓
@@ -357,7 +421,7 @@ User clicks "Reveal All" button
 [CLIENT] All clients receive "revealed"
         ├─ Update session state: revealed = true
         └─ Update UI:
-            ├─ Freeze the poker buttons (disabled)
+            ├─ Freeze the poker buttons and the Ready button (disabled)
             ├─ Freeze the bingo grid (cells no longer clickable)
             ├─ Disable "Reveal All" button
             ├─ Enable "Reset Round" button
@@ -366,8 +430,9 @@ User clicks "Reveal All" button
 Display after reveal:
         ├─ Bingo card: every participant's colored dots visible, including workers'
         ├─ Participant list: each user's poker value next to their name and color
+        │   (☕ for anyone who chose it or never voted)
         └─ Summary below the participant list:
-            ├─ Average of the numeric votes (0–21), one decimal place
+            ├─ Average of the numeric votes (0–21), one decimal place; ☕ is excluded
             └─ Count of "split" votes, when any were cast
 ```
 
@@ -398,6 +463,7 @@ User clicks "Reset Round" button
         ├─ Clear room state:
         │   ├─ bingo_selections = {}
         │   ├─ poker_selections = {}
+        │   ├─ ready = []
         │   └─ revealed = false
         └─ Broadcast "round_reset" message to all in room
         ↓
@@ -408,7 +474,8 @@ User clicks "Reset Round" button
         │   └─ Reset button disabled, Reveal button enabled
         └─ Re-render UI:
             ├─ Clear colored dots from bingo grid and unfreeze the cells
-            ├─ Clear poker selections (deselect all buttons) and unfreeze them
+            ├─ Reset everyone's estimate to ☕ and unfreeze the buttons
+            ├─ Clear all ready ticks and re-enable the Ready button
             ├─ Remove the average / split summary
             ├─ Disable "Reset Round" button
             └─ Enable "Reveal All" button
@@ -478,7 +545,7 @@ User closes tab / disconnects
         ↓
 [CLIENT] All remaining users receive "user_left"
         ├─ Remove user from the participant list
-        └─ Their bingo dots and poker status disappear with the next render
+        └─ Their bingo dots, poker status and ready tick disappear with the next render
         ↓
 Room continues for remaining users:
         ├─ Remaining users' selections persist
@@ -640,4 +707,4 @@ These endpoints exist only when the server runs with `DEBUG=true`.
 
 ---
 
-*Last Updated: 2026-08-18*
+*Last Updated: 2026-10-07*

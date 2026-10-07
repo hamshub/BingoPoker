@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>BingoPoker - Agile Planning Tool</title>
     <link rel="icon" type="image/png" href="/imgs/favicon.png">
-    <link rel="stylesheet" href="/css/styles.css?v=20260813">
+    <link rel="stylesheet" href="/css/styles.css?v=20261010">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 </head>
@@ -141,8 +141,10 @@
 
                         <div class="info-section">
                             <h4>Feedback</h4>
-                            <p>The app is currently in development, bugs may occur and features may be unfinished. For bug reporting and feedback use the <a href="https://github.com/hamshub/BingoPoker" target="_blank" style='color: white'>github page</a>.</p>
+                            <p>The app is currently in development, bugs may occur and features may be unfinished. For bug reporting and feedback, open an issue on the project's GitHub repository.</p>
                         </div>
+
+                        <p id="buildInfo" class="build-info"></p>
                     </div>
                 </div>
             </div>
@@ -186,6 +188,10 @@
                                 <button id="revealBtn" class="btn btn-primary">Reveal All</button>
                                 <button id="resetBtn" class="btn btn-secondary">Reset Round</button>
                             </div>
+                            <label class="auto-reveal" title="Reveal automatically once every participant is ready">
+                                <input type="checkbox" id="autoRevealCheckbox">
+                                Auto-reveal when everyone is ready
+                            </label>
                         </div>
 
                         <!-- Active Users -->
@@ -200,8 +206,9 @@
                         <div class="control-card">
                             <h3>Your Estimate</h3>
                             <div id="pokerValues" class="poker-values">
-                                <!-- Buttons: 0, 1, 2, 3, 5, 8, 13, 21, split -->
+                                <!-- Buttons: coffee (default), 0, 1, 2, 3, 5, 8, 13, 21, split -->
                             </div>
+                            <button id="readyBtn" class="btn btn-ready">Ready</button>
                         </div>
                     </div>
                 </div>
@@ -211,7 +218,7 @@
     </div>
 
     <!-- Scripts -->
-    <script src="/js/api.js?v=20260813"></script>
-    <script src="/js/app.js?v=20260813"></script>
+    <script src="/js/api.js?v=20261010"></script>
+    <script src="/js/app.js?v=20261010"></script>
 </body>
 </html>

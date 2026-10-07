@@ -82,6 +82,7 @@ async def create_room_handler(request: web.Request) -> web.Response:
 
         room_id = room_data["room_id"]
         logger.info(f"Room created: {room_id} ('{name}' by user {creator_id})")
+        await request.app["analytics_manager"].record_room_created()
 
         return web.json_response({
             "room_id": room_id,

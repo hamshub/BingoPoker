@@ -16,6 +16,7 @@ from typing import Optional, Dict, Any
 
 import aiofiles
 
+from .file_io import write_json_atomic, write_text_atomic
 from .validators import Validators
 
 logger = logging.getLogger(__name__)
@@ -257,8 +258,7 @@ class UserManager:
                     return stored.encode("utf-8")
 
             pepper = secrets.token_hex(32)
-            with open(self.pepper_file, "w") as f:
-                f.write(pepper)
+            write_text_atomic(self.pepper_file, pepper)
             logger.info("Generated new email hashing pepper")
             return pepper.encode("utf-8")
         except Exception as e:
@@ -272,12 +272,6 @@ class UserManager:
         Called after registration or profile updates.
         """
         try:
-            # Ensure directory exists
-            os.makedirs(self.data_dir, exist_ok=True)
-
-            # Write to file
-            async with aiofiles.open(self.users_file, "w") as f:
-                content = json.dumps(self.users, indent=2)
-                await f.write(content)
+            await write_json_atomic(self.users_file, self.users)
         except Exception as e:
             logger.error(f"Error saving users: {e}")

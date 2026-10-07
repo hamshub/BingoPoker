@@ -9,12 +9,25 @@ Status snapshot of what is built and what is still missing. For behaviour detail
 ## Completed
 
 ### Backend
-- [x] aiohttp application factory with startup/cleanup hooks, health check, and static
-      serving of `frontend/` (`backend/app.py`).
+- [x] aiohttp application factory `create_app(data_dir, log_dir, admin_password)` with
+      startup/cleanup hooks, health check, and static serving of `frontend/`
+      (`backend/app.py`).
 - [x] Environment configuration via `python-dotenv`: `HOST`, `PORT`, `DEBUG`, `DATA_DIR`,
-      `EMAIL_HASH_PEPPER`.
-- [x] Structured logging to `backend/logs/bingopoker.log` (file `INFO`, console `WARNING`),
+      `LOG_DIR`, `EMAIL_HASH_PEPPER`, `ADMIN_PASSWORD`, `APP_VERSION`, `BUILD_DATE`.
+- [x] Structured logging to `<LOG_DIR>/bingopoker.log` (file `INFO`, console `WARNING`),
       with aiohttp access logs suppressed so emails never reach the log.
+- [x] Daily log rotation (`TimedRotatingFileHandler`, midnight, 30 files kept). In Docker
+      `LOG_DIR=/app/data/logs`, so logs live in the data volume and survive container
+      updates.
+- [x] Crash-safe persistence: all JSON writes go through `utils/file_io.write_json_atomic`
+      (per-file lock, temp file, `fsync`, `os.replace`).
+- [x] `AnalyticsManager`: daily aggregate usage counters in `<DATA_DIR>/analytics.json`
+      (rooms created, joins, unique users, rounds, auto-reveals, vote distribution) without
+      emails or usernames.
+- [x] Password-protected admin pages `/logs` and `/analytics` (HTTP Basic auth), mounted
+      only when `ADMIN_PASSWORD` is set.
+- [x] Build version: `GET /api/version` and `/health` report `APP_VERSION` / `BUILD_DATE`,
+      injected by CI at image build time.
 - [x] `UserManager`: registration, lookup, username and role updates, JSON persistence.
       Users are keyed by a random `uuid4` hex ID and identified by an HMAC-SHA256 email
       digest; plain emails are never persisted. Legacy email-keyed records are migrated on
@@ -22,19 +35,23 @@ Status snapshot of what is built and what is still missing. For behaviour detail
 - [x] Auto-generated HMAC pepper stored at `<DATA_DIR>/.email_pepper` when
       `EMAIL_HASH_PEPPER` is unset.
 - [x] `RoomManager`: room creation with generated `room-XXXXXXXX` IDs, 5×5 grid config
-      persistence, in-memory session state, bingo/poker selection recording, reveal,
+      persistence, in-memory session state, bingo/poker selection recording, ready
+      toggling, reveal,
       reset, deletion, and migration of legacy email `created_by` values to user IDs.
 - [x] `ColorPalette` with 10 contrasting colors and `get_color_by_index(index)`; rooms
       assign colors from a monotonic `color_counter` so rejoining users do not collide.
 - [x] `Validators` for email, username (1–50), room name (1–100), room ID format, 5×5
-      grid, and poker values (`0, 1, 2, 3, 5, 8, 13, 21, split`).
+      grid, and poker values (`coffee, 0, 1, 2, 3, 5, 8, 13, 21, split`).
 - [x] User REST API: `POST /api/user`, `GET /api/user/{email}`, `PUT /api/user/{email}`.
 - [x] Room REST API: `POST /api/room` (duplicate names rejected with 409),
       `GET /api/room/{room_id}`, `GET /api/rooms`, `DELETE /api/room/{room_id}`
       restricted to the room creator (403 otherwise).
 - [x] WebSocket endpoint `/ws/{room_id}/{user_email}` handling join, `bingo_select`,
-      `poker_select`, `reveal`, `reset` and disconnect, with per-room broadcast, cleanup
+      `poker_select`, `ready_toggle`, `auto_reveal_set`, `reveal`, `reset` and disconnect, with per-room broadcast, cleanup
       of dead connections, and a `replaced` message when the same user reconnects.
+- [x] Concurrent broadcast: sends to all sockets in a room in parallel with a 5 s timeout
+      per send; failed sockets are pruned only if they are still the registered connection.
+      Disconnect cleanup is shielded from handler cancellation.
 - [x] Debug endpoints `DELETE /api/debug/users` and `DELETE /api/debug/rooms`, mounted
       only when `DEBUG=true`.
 
@@ -50,32 +67,42 @@ Status snapshot of what is built and what is still missing. For behaviour detail
 - [x] Grid configuration download from inside a room.
 - [x] Deep-link sharing via `?r=<room_id>`, including `pending_room` handoff for visitors
       who must register first, and browser back/forward handling via `popstate`.
-- [x] Live game rendering: bingo grid with per-user color dots, poker value buttons,
-      participant list with status, reveal/reset controls and a post-reveal average
-      summary.
+- [x] Live game rendering: bingo grid with per-user color dots (cells updated in place so
+      remote updates don't replay the hover animation), poker value buttons with ☕ as the
+      default, a Ready toggle with green ✓ ticks in the participant list, a room-wide
+      Auto-reveal checkbox that reveals once everyone is ready, reveal/reset
+      controls and a post-reveal average summary that ignores ☕.
 - [x] Visibility rules: observer selections always visible, worker selections private
       until reveal.
 - [x] WebSocket client with message dispatch and connection-error handling; failed REST
       calls surface as inline errors or alerts rather than silent failures.
 - [x] HTML escaping of all user-supplied text before DOM insertion.
 - [x] `?dev=true` flag to reveal the debug buttons.
+- [x] Build version ("Version <sha> · <date>" or "Development build") shown under the info
+      block on the room list screen.
+
+### Testing & CI
+- [x] pytest suite in `backend/tests/`: validators, `RoomManager`, atomic file
+      I/O, `AnalyticsManager`, end-to-end WebSocket protocol, and app-level checks (health,
+      version, no plain emails on disk, log rotation, admin auth, path traversal).
+- [x] GitHub Actions `test` job runs `pytest`; `build-and-publish` depends on it, so
+      images are only published when tests pass.
 
 ---
 
 ## Remaining Work
 
-- [ ] **No automated tests.** `backend/tests/` is empty; `pytest` and `pytest-aiohttp` are
-      declared in `backend/requirements-dev.txt` but unused. All verification is manual.
 - [ ] **No authentication.** Identity is a self-asserted email + username; anyone who
       knows an email can act as that user. There is no password, token or session check.
 - [ ] **Single-process, in-memory session state.** Active participants, selections and
       the reveal flag live in one process's memory, so the app cannot be scaled
-      horizontally and all sessions are lost on restart.
-- [ ] **No rate limiting** on REST endpoints or WebSocket messages.
-- [ ] **No log rotation.** `backend/logs/bingopoker.log` grows without bound.
+      horizontally and all sessions are lost on restart, including when Watchtower
+      recreates the container for an update (in-progress rounds are wiped).
+- [ ] **No rate limiting** on REST endpoints or WebSocket messages; the only throttle is
+      the 1 s delay after a failed admin login.
 - [ ] **Colors repeat after 10 participants** in a room, since the palette holds 10 colors
       and the counter wraps.
 
 ---
 
-*Last Updated: 2026-08-18*
+*Last Updated: 2026-10-07*

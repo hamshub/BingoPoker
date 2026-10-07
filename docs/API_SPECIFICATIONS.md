@@ -39,11 +39,11 @@ Content-Type: text/html
 <html>...</html>
 ```
 
-Static assets are mounted at `/css`, `/js`, and `/templates`, served from the matching `frontend/` subdirectories.
+Static assets are mounted at `/css`, `/imgs`, `/js`, and `/templates`, served from the matching `frontend/` subdirectories.
 
 ---
 
-### 2. Health Check
+### 2. Health Check and Version
 **Endpoint**: `GET /health`
 
 **Description**: Server health status check
@@ -61,7 +61,23 @@ Content-Type: application/json
 
 {
   "status": "ok",
-  "service": "BingoPoker API"
+  "service": "BingoPoker API",
+  "version": "dev"
+}
+```
+
+**Endpoint**: `GET /api/version`
+
+**Description**: Reports the running build. Values come from the `APP_VERSION` (default `"dev"`) and `BUILD_DATE` (default `""`) environment variables, which CI sets at image build time to the commit SHA and a UTC ISO timestamp. The frontend shows `Version <first 7 chars> · <YYYY-MM-DD>` (or `Development build`) on the room list screen.
+
+**Response**:
+```http
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{
+  "version": "<commit-sha>",
+  "build_date": "2026-10-07T12:00:00Z"
 }
 ```
 
@@ -368,6 +384,8 @@ Content-Type: application/json
       "poker_selections": {
         "alice@company.com": "8"
       },
+      "ready": ["alice@company.com"],
+      "auto_reveal": false,
       "revealed": false,
       "color_counter": 1
     }
@@ -377,7 +395,7 @@ Content-Type: application/json
 
 `config.created_by` is a **user ID**, never an email. It may be `null` for legacy rooms whose creator could not be resolved during migration.
 
-If nobody is currently connected, `session` is the empty default (`users: []`, empty selection maps, `revealed: false`).
+If nobody is currently connected, `session` is the empty default (`users: []`, empty selection maps, `ready: []`, `auto_reveal: false`, `revealed: false`).
 
 **Error Responses**:
 - `400 invalid_room_id` — the ID does not match `room-{8 alphanumeric}`
@@ -474,6 +492,24 @@ Registered only when the `DEBUG` environment variable is `true`. **They wipe all
 
 ---
 
+### 11. Admin Pages (ADMIN_PASSWORD only)
+
+Server-rendered HTML pages, registered only when the `ADMIN_PASSWORD` environment variable is non-empty. Without it a warning is logged at startup and both paths return `404`.
+
+| Endpoint | Content |
+| --- | --- |
+| `GET /logs` | List of the current and rotated log files (newest first) and the selected file's content. `?file=<name>` selects a file; only names from the listing are accepted (`404 Log file not found` otherwise, which prevents path traversal). Files over 2 MB show their last 2 MB. |
+| `GET /analytics` | Usage statistics: total cards (registered users, rooms, days with activity, rooms created, room joins, rounds revealed, auto-reveals, votes cast, average participants per round, most popular card, ☕ share of votes), a vote distribution bar chart, and a table of the last 30 active days. No external JS/CSS libraries. |
+
+**Authentication**: HTTP Basic auth. Any username is accepted; the password must equal `ADMIN_PASSWORD` (constant-time comparison).
+- Missing or wrong credentials → `401 Authentication required` with `WWW-Authenticate: Basic realm="BingoPoker admin"`
+- A wrong password is logged as a warning and the response is delayed by 1 s
+- Successful responses carry `Cache-Control: no-store`
+
+Basic auth sends the password with every request, so these pages must only be reached over HTTPS (Caddy in production).
+
+---
+
 ## WebSocket Endpoints
 
 ### Connection
@@ -547,7 +583,9 @@ All messages (both directions) use the envelope `{ "type": "...", "payload": {..
 }
 ```
 
-**Valid Values**: `"0"`, `"1"`, `"2"`, `"3"`, `"5"`, `"8"`, `"13"`, `"21"`, `"split"`
+**Valid Values**: `"coffee"`, `"0"`, `"1"`, `"2"`, `"3"`, `"5"`, `"8"`, `"13"`, `"21"`, `"split"`
+
+`"coffee"` (shown as ☕) is every user's default estimate and is excluded from the post-reveal average. Choosing it explicitly is stored and counts as a vote like any other value.
 
 **Server Processing**:
 - Overwrites any previous selection for this user
@@ -556,7 +594,43 @@ All messages (both directions) use the envelope `{ "type": "...", "payload": {..
 
 ---
 
-#### 3. Reveal Votes
+#### 3. Toggle Ready
+**Message Type**: `ready_toggle`
+
+**Purpose**: Flip the user's ready flag for the current round (shown as a green tick next to their name)
+
+**Structure**:
+```json
+{ "type": "ready_toggle", "payload": {} }
+```
+
+**Server Processing**:
+- Adds the user's email to `session.ready`, or removes it if already present
+- Broadcasts `ready_updated` with the full `ready` list to all clients in the room
+- The UI disables the Ready button after reveal; the server does not check `revealed`
+- If auto-reveal is on and every participant is ready, the server reveals the round right away (see `auto_reveal_set`)
+
+---
+
+#### 4. Set Auto-reveal
+**Message Type**: `auto_reveal_set`
+
+**Purpose**: Turn the room's auto-reveal setting on or off. It is shared by everyone in the room.
+
+**Structure**:
+```json
+{ "type": "auto_reveal_set", "payload": { "enabled": true } }
+```
+
+**Server Processing**:
+- Stores `enabled` in `session.auto_reveal`; a non-boolean value is ignored silently
+- Broadcasts `auto_reveal_updated` to all clients in the room
+- While it is on, the server reveals the round (broadcasting `revealed`, exactly as for `reveal`) as soon as every participant in the session is ready. This is checked after `ready_toggle`, after `auto_reveal_set`, and when a participant leaves
+- The setting survives `reset`; it lasts as long as the in-memory session (until the last participant leaves)
+
+---
+
+#### 5. Reveal Votes
 **Message Type**: `reveal`
 
 **Structure**:
@@ -570,7 +644,7 @@ All messages (both directions) use the envelope `{ "type": "...", "payload": {..
 
 ---
 
-#### 4. Reset Round
+#### 6. Reset Round
 **Message Type**: `reset`
 
 **Structure**:
@@ -579,7 +653,7 @@ All messages (both directions) use the envelope `{ "type": "...", "payload": {..
 ```
 
 **Server Processing**:
-- Clears `bingo_selections` and `poker_selections`, sets `revealed` back to `false`
+- Clears `bingo_selections`, `poker_selections` and `ready`, sets `revealed` back to `false`
 - Broadcasts `round_reset` (empty payload) to all clients
 
 ---
@@ -615,6 +689,8 @@ All messages (both directions) use the envelope `{ "type": "...", "payload": {..
       ],
       "bingo_selections": { "alice@company.com": [[0, 0], [1, 3]] },
       "poker_selections": { "alice@company.com": "8" },
+      "ready": ["alice@company.com"],
+      "auto_reveal": false,
       "revealed": false,
       "color_counter": 1
     }
@@ -697,11 +773,38 @@ Visibility is enforced client-side: a **worker**'s cells are rendered only for t
 }
 ```
 
-**Note**: The actual poker value is not sent until `reveal`. Clients re-render the participants list to show "ready"/"waiting" state.
+**Note**: The actual poker value is not sent until `reveal`. Clients re-render the participants list to show "voted"/"waiting" state.
 
 ---
 
-#### 6. Revealed
+#### 6. Ready Updated
+**Message Type**: `ready_updated`
+
+**Structure**:
+```json
+{
+  "type": "ready_updated",
+  "payload": { "ready": ["alice@company.com", "bob@company.com"] }
+}
+```
+
+**Note**: Carries the full list of ready users. Clients show a green ✓ next to each of them in the participants list and toggle the state of their own Ready button.
+
+---
+
+#### 7. Auto-reveal Updated
+**Message Type**: `auto_reveal_updated`
+
+**Structure**:
+```json
+{ "type": "auto_reveal_updated", "payload": { "enabled": true } }
+```
+
+**Note**: Clients update the "Auto-reveal when everyone is ready" checkbox under Round Controls.
+
+---
+
+#### 8. Revealed
 **Message Type**: `revealed`
 
 **Structure**:
@@ -721,9 +824,11 @@ Visibility is enforced client-side: a **worker**'s cells are rendered only for t
 }
 ```
 
+Users without an entry in `poker_selections` never voted and kept the default ☕; clients display ☕ for them. All ☕ values, explicit or default, are left out of the average.
+
 ---
 
-#### 7. Round Reset
+#### 9. Round Reset
 **Message Type**: `round_reset`
 
 **Structure**:
@@ -733,7 +838,7 @@ Visibility is enforced client-side: a **worker**'s cells are rendered only for t
 
 ---
 
-#### 8. Replaced (duplicate connection)
+#### 10. Replaced (duplicate connection)
 **Message Type**: `replaced`
 
 **Purpose**: Sent to an existing connection when the same user opens a new tab/window and joins the same room; the server then closes this connection
@@ -745,7 +850,7 @@ Visibility is enforced client-side: a **worker**'s cells are rendered only for t
 
 ---
 
-#### 9. Error
+#### 11. Error
 **Message Type**: `error`
 
 **Structure**:
@@ -771,7 +876,7 @@ Backend validation lives in `backend/utils/validators.py`:
 | Room name | 1–100 characters |
 | Room ID | `^room-[a-zA-Z0-9]{8}$` |
 | Grid | List of 5 lists of 5 strings |
-| Poker value | One of `0`, `1`, `2`, `3`, `5`, `8`, `13`, `21`, `split` |
+| Poker value | One of `coffee`, `0`, `1`, `2`, `3`, `5`, `8`, `13`, `21`, `split` |
 | Bingo cell | Row and column each in 0–4 (checked in `RoomManager`) |
 
 There is no per-cell text length validator on the backend; the 50-character cap on grid cells is only a frontend `maxLength` on the editor inputs.
@@ -801,13 +906,13 @@ There is no per-cell text length validator on the backend; the 50-character cap 
 - `invalid_json` — malformed JSON body
 - `server_error` — unhandled exception (500)
 
-There is currently no rate limiting implemented.
+There is currently no rate limiting implemented (apart from the 1 s delay after a failed admin login).
 
 ---
 
 ## Logging
 
-Server events are written to `backend/logs/bingopoker.log` (INFO and above to file, WARNING and above to console). Logged events: user registered, user login, room created, room deleted, user joined room, user left room. Log lines reference `user_id`, never the email address. The `aiohttp.access` and `asyncio` loggers are raised to WARNING to suppress noise and to keep emails out of access-log URLs.
+Server events are written to `<LOG_DIR>/bingopoker.log` (INFO and above to file, WARNING and above to console). `LOG_DIR` defaults to `backend/logs`; the Docker image sets it to `/app/data/logs` so logs live in the data volume. The file rotates at midnight to `bingopoker.log.YYYY-MM-DD` and 30 files are kept (days without log lines produce no file). Logs can be browsed on the [`/logs` admin page](#11-admin-pages-admin_password-only). Logged events: user registered, user login, room created, room deleted, user joined room, user left room. Log lines reference `user_id`, never the email address. The `aiohttp.access` and `asyncio` loggers are raised to WARNING to suppress noise and to keep emails out of access-log URLs.
 
 ---
 
@@ -817,4 +922,4 @@ There is no automatic client-side reconnection logic. If the WebSocket closes (n
 
 ---
 
-*Last Updated: 2026-08-18*
+*Last Updated: 2026-10-07*

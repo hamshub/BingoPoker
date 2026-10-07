@@ -15,6 +15,7 @@ from typing import Optional, Dict, Any, Tuple
 import aiofiles
 
 from .color_palette import ColorPalette
+from .file_io import write_json_atomic
 from .validators import Validators
 
 logger = logging.getLogger(__name__)
@@ -97,13 +98,7 @@ class RoomManager:
         await self._save_to_disk()
 
         # Initialize empty session state with a monotonic color counter
-        self.sessions[room_id] = {
-            "users": [],
-            "bingo_selections": {},
-            "poker_selections": {},
-            "revealed": False,
-            "color_counter": 0,
-        }
+        self.sessions[room_id] = self._new_session()
 
         return (True, None, room_config)
 
@@ -134,12 +129,7 @@ class RoomManager:
 
         session = self.sessions.get(
             room_id,
-            {
-                "users": [],
-                "bingo_selections": {},
-                "poker_selections": {},
-                "revealed": False,
-            },
+            self._new_session(),
         )
 
         return {
@@ -162,13 +152,7 @@ class RoomManager:
         if room_id not in self.sessions:
             if room_id not in self.rooms:
                 return False
-            self.sessions[room_id] = {
-                "users": [],
-                "bingo_selections": {},
-                "poker_selections": {},
-                "revealed": False,
-                "color_counter": 0,
-            }
+            self.sessions[room_id] = self._new_session()
 
         session = self.sessions[room_id]
 
@@ -214,6 +198,8 @@ class RoomManager:
         # Clean up user's selections
         session["bingo_selections"].pop(user_email, None)
         session["poker_selections"].pop(user_email, None)
+        if user_email in session.get("ready", []):
+            session["ready"].remove(user_email)
 
         # Clean up empty room
         if len(session["users"]) == 0:
@@ -268,7 +254,7 @@ class RoomManager:
         Args:
             room_id: Room identifier
             user_email: User's email
-            value: Poker value ('0', '1', '2', '3', '5', '8', '13', '21', 'split')
+            value: Poker value ('coffee', '0', '1', '2', '3', '5', '8', '13', '21', 'split')
 
         Returns:
             (success: bool, error: str | None)
@@ -288,6 +274,69 @@ class RoomManager:
 
         return (True, None)
 
+    async def toggle_ready(
+        self, room_id: str, user_email: str
+    ) -> Tuple[bool, Optional[str]]:
+        """
+        Toggle a user's ready flag for the current round.
+
+        Args:
+            room_id: Room identifier
+            user_email: User's email
+
+        Returns:
+            (success: bool, error: str | None)
+        """
+        if room_id not in self.sessions:
+            return (False, "Room not found")
+
+        # Sessions created before the ready flag existed lack the key
+        ready = self.sessions[room_id].setdefault("ready", [])
+        if user_email in ready:
+            ready.remove(user_email)
+        else:
+            ready.append(user_email)
+
+        return (True, None)
+
+    async def set_auto_reveal(
+        self, room_id: str, enabled: bool
+    ) -> Tuple[bool, Optional[str]]:
+        """
+        Turn the room's auto-reveal setting on or off.
+
+        Args:
+            room_id: Room identifier
+            enabled: Whether to reveal automatically once everyone is ready
+
+        Returns:
+            (success: bool, error: str | None)
+        """
+        if room_id not in self.sessions:
+            return (False, "Room not found")
+        if not isinstance(enabled, bool):
+            return (False, "enabled must be a boolean")
+
+        self.sessions[room_id]["auto_reveal"] = enabled
+        return (True, None)
+
+    def should_auto_reveal(self, room_id: str) -> bool:
+        """
+        Check whether the round should be revealed automatically.
+
+        Args:
+            room_id: Room identifier
+
+        Returns:
+            True if auto-reveal is on, the round is unrevealed, and every participant is ready
+        """
+        session = self.sessions.get(room_id)
+        if not session or not session.get("auto_reveal") or session["revealed"]:
+            return False
+        ready = session.get("ready", [])
+        users = session["users"]
+        return bool(users) and all(u["email"] in ready for u in users)
+
     async def reveal_round(self, room_id: str) -> Tuple[bool, Optional[str]]:
         """
         Reveal all poker selections for the room.
@@ -303,13 +352,7 @@ class RoomManager:
 
         # Initialize session if no one has joined yet (edge case)
         if room_id not in self.sessions:
-            self.sessions[room_id] = {
-                "users": [],
-                "bingo_selections": {},
-                "poker_selections": {},
-                "revealed": False,
-                "color_counter": 0,
-            }
+            self.sessions[room_id] = self._new_session()
 
         self.sessions[room_id]["revealed"] = True
         return (True, None)
@@ -318,7 +361,7 @@ class RoomManager:
         """
         Reset selections for a new round.
 
-        Clears bingo/poker selections and unreveals.
+        Clears bingo/poker selections and ready flags, and unreveals.
 
         Args:
             room_id: Room identifier
@@ -332,6 +375,7 @@ class RoomManager:
         session = self.sessions[room_id]
         session["bingo_selections"] = {}
         session["poker_selections"] = {}
+        session["ready"] = []
         session["revealed"] = False
 
         return (True, None)
@@ -395,15 +439,27 @@ class RoomManager:
         Called after room creation. Session state is ephemeral.
         """
         try:
-            # Ensure directory exists
-            os.makedirs(self.data_dir, exist_ok=True)
-
-            # Write to file
-            async with aiofiles.open(self.rooms_file, "w") as f:
-                content = json.dumps(self.rooms, indent=2)
-                await f.write(content)
+            await write_json_atomic(self.rooms_file, self.rooms)
         except Exception as e:
             logger.error(f"Error saving rooms: {e}")
+
+    @staticmethod
+    def _new_session() -> Dict[str, Any]:
+        """
+        Build an empty session with a monotonic color counter.
+
+        Returns:
+            Fresh session state dict
+        """
+        return {
+            "users": [],
+            "bingo_selections": {},
+            "poker_selections": {},
+            "ready": [],
+            "auto_reveal": False,
+            "revealed": False,
+            "color_counter": 0,
+        }
 
     @staticmethod
     def _generate_room_id() -> str:

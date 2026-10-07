@@ -27,6 +27,7 @@ BingoPoker is a real-time collaborative web application using a client-server We
 │  └──────────────────────────────────────┘  │
 │  ┌──────────────────────────────────────┐  │
 │  │  routes/users.py, routes/rooms.py    │  │
+│  │  routes/admin.py (ADMIN_PASSWORD)    │  │
 │  │  routes/debug.py (DEBUG only)        │  │
 │  └──────────────────────────────────────┘  │
 │  ┌──────────────────────────────────────┐  │
@@ -41,15 +42,19 @@ BingoPoker is a real-time collaborative web application using a client-server We
 │  │  - Username / role updates           │  │
 │  └──────────────────────────────────────┘  │
 │  ┌──────────────────────────────────────┐  │
+│  │  utils/analytics_manager.py          │  │
+│  │  - Daily aggregate usage counters    │  │
+│  └──────────────────────────────────────┘  │
+│  ┌──────────────────────────────────────┐  │
+│  │  utils/file_io.py (atomic writes)    │  │
 │  │  utils/color_palette.py, validators  │  │
 │  └──────────────────────────────────────┘  │
-└──────────────┬──────────────────────────┬──┘
-               │                          │
-               ▼                          ▼
-        ┌─────────────┐          ┌─────────────┐
-        │  users.json │          │ rooms.json  │
-        │ (Persistent)│          │(Persistent) │
-        └─────────────┘          └─────────────┘
+└───────┬──────────────┬──────────────┬──────┘
+        │              │              │
+        ▼              ▼              ▼
+ ┌────────────┐ ┌────────────┐ ┌────────────────┐
+ │ users.json │ │ rooms.json │ │ analytics.json │
+ └────────────┘ └────────────┘ └────────────────┘
 ```
 
 ## Component Details
@@ -60,9 +65,9 @@ Static HTML/CSS/vanilla JavaScript, served by the same aiohttp app. There is no 
 
 #### Files
 - `index.html` - Login modal overlay plus two screens: `roomSelectScreen` and `gameScreen`
-- `js/api.js` - REST client class `BingoPokerAPI` (`registerUser`, `getUser`, `updateRole`, `createRoom`, `getRoom`, `listRooms`, `deleteRoom`) and the `GridUtils` object (`DEFAULT_GRID`, `createEmptyGrid`, `isCenterCell`, `isValidGrid`)
+- `js/api.js` - REST client class `BingoPokerAPI` (`registerUser`, `getUser`, `updateRole`, `createRoom`, `getRoom`, `listRooms`, `deleteRoom`, `getVersion`) and the `GridUtils` object (`DEFAULT_GRID`, `createEmptyGrid`, `isCenterCell`, `isValidGrid`)
 - `js/app.js` - All application state (`appState`), screen navigation, rendering, and the WebSocket client
-- `css/styles.css` - Dark theme styling (Outfit font, `#057FA8` accent palette)
+- `css/styles.css` - Dark theme styling (Outfit font, `#057FA8` accent palette), with a single-column phone layout below 768px wide or 500px tall
 - `templates/agile-default.json` - Sample grid file users can import when creating a room
 
 #### Responsibilities
@@ -74,28 +79,33 @@ Static HTML/CSS/vanilla JavaScript, served by the same aiohttp app. There is no 
 - Escaping all user-supplied text before inserting it into HTML (`escapeHtml`)
 - Visual rendering of:
   - Bingo card grid with per-user color dots
-  - Participant list with colors, role badges, and vote status
-  - Poker value buttons and the post-reveal average / split summary
+  - Participant list with colors, role badges, ready ticks, and vote status
+  - Poker value buttons, the Ready toggle, and the post-reveal average / split summary
   - Room information and shareable invite link
+  - Build version under the info block on the room list (`renderBuildInfo` → `#buildInfo`)
 
 ### 2. Backend (Server-Side)
 
 #### Main Application (`app.py`)
-Exposes `create_app()` plus the lifecycle and simple request handlers:
-- `startup_handler` - configures logging, instantiates `UserManager` and `RoomManager`, loads both from disk, and runs `room_manager.migrate_creator_ids(...)` to convert legacy plain-email `created_by` values into user IDs
-- `cleanup_handler` - logs shutdown
-- `health_check_handler` - `GET /health`
+Exposes `create_app(data_dir=None, log_dir=None, admin_password=None)` plus the lifecycle and simple request handlers. The arguments override `DATA_DIR`, `LOG_DIR` and `ADMIN_PASSWORD` (the tests pass temporary directories):
+- `startup_handler` - configures logging, instantiates `UserManager`, `RoomManager` and `AnalyticsManager` (stored as `app["user_manager"]`, `app["room_manager"]`, `app["analytics_manager"]`), loads them from disk, runs `room_manager.migrate_creator_ids(...)` to convert legacy plain-email `created_by` values into user IDs, and logs a warning when `ADMIN_PASSWORD` is unset
+- `cleanup_handler` - logs shutdown and closes the log handlers
+- `health_check_handler` - `GET /health` (includes `version`)
+- `version_handler` - `GET /api/version` → `{ version, build_date }`
 - `serve_index_handler` - `GET /` serves `frontend/index.html`
 
 Registered routes:
-- `GET /` and `GET /health`
+- `GET /`, `GET /health` and `GET /api/version`
 - User routes from `routes/users.py`
 - Room routes from `routes/rooms.py`
 - Debug routes from `routes/debug.py` — **only when `DEBUG=true`**
+- Admin routes from `routes/admin.py` — **only when `ADMIN_PASSWORD` is non-empty**
 - `GET /ws/{room_id}/{user_email}` → `room_websocket_handler`
-- Static directories `/css`, `/js`, `/templates`
+- Static directories `/css`, `/imgs`, `/js`, `/templates`
 
-Configuration comes from environment variables (`.env` supported via `python-dotenv`): `HOST`, `PORT` (default `8081`), `DEBUG`, `DATA_DIR`, `EMAIL_HASH_PEPPER`. Logging writes to `backend/logs/bingopoker.log` (INFO) and the console (WARNING and above); aiohttp access logs are suppressed so URLs containing emails are never written.
+Configuration comes from environment variables (`.env` supported via `python-dotenv`): `HOST`, `PORT` (default `8081`), `DEBUG`, `DATA_DIR`, `LOG_DIR` (default `backend/logs`), `EMAIL_HASH_PEPPER`, `ADMIN_PASSWORD`, `APP_VERSION` (default `dev`) and `BUILD_DATE` (the last two are injected at image build time by CI).
+
+Logging writes to `<LOG_DIR>/bingopoker.log` (INFO) and the console (WARNING and above). The file handler is a `TimedRotatingFileHandler` that rotates at midnight to `bingopoker.log.YYYY-MM-DD` and keeps 30 files (`LOG_RETENTION_FILES`); days without log lines produce no file, so 30 files can span more than 30 days. aiohttp access logs are suppressed so URLs containing emails are never written.
 
 #### User Routes (`routes/users.py`)
 - `register_user_handler` — `POST /api/user`
@@ -115,11 +125,20 @@ Destructive development helpers, registered only when `DEBUG=true`:
 - `DELETE /api/debug/users` — wipes `users.json` and the in-memory user index
 - `DELETE /api/debug/rooms` — wipes `rooms.json` and all sessions
 
+#### Admin Routes (`routes/admin.py`)
+Password-protected pages, registered only when `ADMIN_PASSWORD` is set (otherwise the paths return `404`):
+- `require_admin` — HTTP Basic auth wrapper: any username, password compared with `hmac.compare_digest`; failed attempts are logged as warnings and delayed by 1 s; successful responses carry `Cache-Control: no-store`
+- `logs_handler` — `GET /logs` lists the current and rotated log files (newest first) and shows the selected one; only listed names are accepted (prevents path traversal), and files over 2 MB show their last 2 MB
+- `analytics_handler` — `GET /analytics` renders usage statistics from `AnalyticsManager` as self-contained HTML (no external JS/CSS)
+
+Basic auth sends the password with every request, so these pages must be served over HTTPS (Caddy in production).
+
 #### WebSocket Handler (`handlers/websocket.py`)
 - `room_websocket_handler` — public entry point bound to `GET /ws/{room_id}/{user_email}`
-- `_handle_message` — routes `bingo_select`, `poker_select`, `reveal`, `reset`
-- `_broadcast` — sends to every open socket in a room, optionally excluding one email, and prunes dead sockets
-- `_disconnect` — deregisters the socket, removes the user from the session, and broadcasts `user_left`
+- `_handle_message` — routes `bingo_select`, `poker_select`, `ready_toggle`, `auto_reveal_set`, `reveal`, `reset`
+- `_reveal` — reveals the round, records it in analytics once per round (repeated reveal clicks re-broadcast but are not counted again), and broadcasts `revealed`
+- `_broadcast` — snapshots the room's connections (optionally excluding one email) and sends to all of them concurrently with `asyncio.gather`; each send has a 5 s timeout (`_SEND_TIMEOUT_SECONDS`), so one slow client cannot stall the room. A socket whose send failed or that is closed is pruned only if it is still the registered connection for that email (a reconnect may already have replaced it)
+- `_disconnect` — deregisters the socket, removes the user from the session, and broadcasts `user_left`. It runs under `asyncio.shield` in the handler's `finally`, because aiohttp cancels the handler when the peer drops and the cleanup and follow-up broadcasts would otherwise be cut off
 - `_serialize_session` — converts tuple cell coordinates to JSON-friendly lists
 - `_connections` — module-level registry `{room_id: {email: ws}}`
 
@@ -133,7 +152,9 @@ Manages persisted room config and in-memory session state:
 - **Session** (in-memory, ephemeral, keyed separately by `room_id`):
   - `users` (current connections, each with assigned `color`)
   - `bingo_selections` (email → list of `(row, col)` tuples)
-  - `poker_selections` (email → poker value)
+  - `poker_selections` (email → poker value; no entry means the user has not voted and shows the default ☕)
+  - `ready` (list of emails whose Ready toggle is on)
+  - `auto_reveal` (boolean room setting; survives reset)
   - `revealed` (boolean)
   - `color_counter` (monotonic, never reused within a room)
 
@@ -146,6 +167,9 @@ Manages persisted room config and in-memory session state:
   - `remove_user_from_session(room_id, user_email)` → bool; deletes the session when the last user leaves
   - `record_bingo_selection(room_id, user_email, cell_row, cell_col)` → (success, error) — toggles the cell
   - `record_poker_selection(room_id, user_email, value)` → (success, error)
+  - `toggle_ready(room_id, user_email)` → (success, error) — toggles the ready flag
+  - `set_auto_reveal(room_id, enabled)` → (success, error)
+  - `should_auto_reveal(room_id)` → bool — auto-reveal on, not yet revealed, and every participant ready
   - `reveal_round(room_id)` → (success, error)
   - `reset_round(room_id)` → (success, error)
   - `get_active_rooms()` → all persisted room configs
@@ -171,6 +195,21 @@ Manages user profiles with privacy-preserving storage:
   - `update_role(email, new_role)` → (success, error)
   - `user_exists(email)` → boolean
 
+#### Analytics Manager (`utils/analytics_manager.py`)
+Keeps per-day aggregate counters in `analytics.json` (dates are server-local):
+- **Methods**:
+  - `load()` → read `analytics.json`, starting empty if it is missing or unreadable
+  - `record_room_created()` — after a successful `POST /api/room`
+  - `record_join(user_id, room_size)` — on WebSocket join; tracks unique users and the peak room size
+  - `record_reveal(votes, participants, auto)` — once per revealed round
+  - `get_summary()` → per-day rows (newest first), totals, vote distribution, days active
+- No emails or usernames are stored. Only the current day's random user IDs are kept, to count unique users; they are dropped (reduced to `active_users`) when a new day starts.
+
+#### File I/O (`utils/file_io.py`)
+Crash-safe persistence helpers used by every manager and by `routes/debug.py`:
+- `write_json_atomic(path, data)` — takes a per-path `asyncio.Lock`, serializes inside the lock (so the last writer always saves the newest state), writes `<file>.tmp`, `fsync`s it, and swaps it in with `os.replace`
+- `write_text_atomic(path, content)` — synchronous equivalent for small text files (used for `.email_pepper`)
+
 #### Color Palette (`utils/color_palette.py`)
 10-color palette with rolling assignment per room session:
 - Predefined list of 10 maximally contrasted hex colors
@@ -180,11 +219,11 @@ Manages user profiles with privacy-preserving storage:
 - Color is ephemeral — never persisted to `users.json`
 
 #### Validators (`utils/validators.py`)
-Static helpers returning `(is_valid, error_message)`: `validate_email`, `validate_username` (1–50 chars), `validate_room_name` (1–100 chars), `validate_room_id` (`room-XXXXXXXX`), `validate_grid` (5×5 array of strings), `validate_poker_value` (`0, 1, 2, 3, 5, 8, 13, 21, split`).
+Static helpers returning `(is_valid, error_message)`: `validate_email`, `validate_username` (1–50 chars), `validate_room_name` (1–100 chars), `validate_room_id` (`room-XXXXXXXX`), `validate_grid` (5×5 array of strings), `validate_poker_value` (`coffee, 0, 1, 2, 3, 5, 8, 13, 21, split`).
 
 ### 3. Data Persistence
 
-Room and user data are written asynchronously with `aiofiles` to JSON files under `backend/data`. Session and round state lives in memory only and is lost when the last user leaves a room or when the server restarts.
+Room, user and analytics data are written to JSON files under `DATA_DIR` (default `backend/data`). Every write goes through `write_json_atomic`, so a crash or container stop mid-write never leaves a truncated file: the new content is written to `<file>.tmp`, flushed to disk and atomically renamed over the old file. Session and round state lives in memory only and is lost when the last user leaves a room or when the server restarts (including a Watchtower container update).
 
 #### `users.json`
 Keyed by a random user ID; the email exists only as a keyed HMAC digest.
@@ -221,6 +260,9 @@ Keyed by a random user ID; the email exists only as a keyed HMAC digest.
 }
 ```
 
+#### `analytics.json`
+Daily aggregate counters keyed by date (`rooms_created`, `joins`, `active_users`, `peak_room_size`, `rounds_revealed`, `auto_reveals`, `participants_in_rounds`, `votes`), plus the current day's `user_ids`. See [DATA_STRUCTURES.md](DATA_STRUCTURES.md) for the full schema.
+
 #### `.email_pepper`
 The HMAC pepper used to compute `email_hash`. Taken from the `EMAIL_HASH_PEPPER` environment variable when set; otherwise a random value is generated on first run and stored in `backend/data/.email_pepper`. Changing the pepper invalidates all existing email lookups.
 
@@ -229,7 +271,8 @@ The HMAC pepper used to compute `email_hash`. Taken from the `EMAIL_HASH_PEPPER`
 - **Emails are never stored in plain text.** `users.json` is keyed by a random `uuid4` hex user ID, and each record holds only an HMAC-SHA256 digest of the email. An in-memory index maps `email_hash → user_id`.
 - **`rooms.json` stores `created_by` as a user ID**, not an email. Legacy records are migrated automatically at startup by `migrate_creator_ids`.
 - Emails are still the API- and WebSocket-facing identifier (path parameters) and the in-memory session key — they are simply never written to disk or to logs. The aiohttp access logger is silenced for this reason.
-- **Authorization**: only the room creator may delete a room; the server compares the requester's resolved user ID against `created_by` and returns `403` otherwise. This is the only authorization rule in the application — there is no password or token authentication.
+- **Authorization**: only the room creator may delete a room; the server compares the requester's resolved user ID against `created_by` and returns `403` otherwise. This is the only authorization rule for app users — there is no password or token authentication. The admin pages (`/logs`, `/analytics`) are separate and protected by HTTP Basic auth against `ADMIN_PASSWORD`.
+- **Analytics** contain no emails or usernames; only the current day's random user IDs are held, to count unique users.
 - **Output encoding**: the frontend escapes all user-supplied text (usernames, room names, grid cells) before inserting it into HTML.
 
 ## Real-Time Model
@@ -249,6 +292,8 @@ Every message uses the envelope `{ "type": "...", "payload": { ... } }`.
 |---|---|---|
 | Client → Server | `bingo_select` | `{ row, col }` — toggles the cell |
 | Client → Server | `poker_select` | `{ value }` |
+| Client → Server | `ready_toggle` | Empty payload — toggles the sender's ready flag |
+| Client → Server | `auto_reveal_set` | `{ enabled }` — sets the room's auto-reveal setting |
 | Client → Server | `reveal` | Empty payload |
 | Client → Server | `reset` | Empty payload |
 | Server → Client | `room_state` | Sent only to the joining socket |
@@ -256,6 +301,8 @@ Every message uses the envelope `{ "type": "...", "payload": { ... } }`.
 | Server → Client | `user_left` | Leaving email plus remaining users |
 | Server → Client | `bingo_updated` | Full `bingo_selections` map |
 | Server → Client | `poker_updated` | `{ email, has_selection }` — never the value |
+| Server → Client | `ready_updated` | `{ ready }` — full list of ready emails |
+| Server → Client | `auto_reveal_updated` | `{ enabled }` |
 | Server → Client | `revealed` | `bingo_selections` + `poker_selections` |
 | Server → Client | `round_reset` | Empty payload |
 | Server → Client | `replaced` | The previous socket for the same user is being closed |
@@ -267,7 +314,8 @@ Clients connect directly to `/ws/{room_id}/{user_email}` — there is no separat
 
 - **Worker bingo selections** are visible only to the selecting user until the round is revealed.
 - **Observer bingo selections** are visible to everyone at all times.
-- **Poker values** are never shown before reveal; other participants only see `ready` or `waiting`. The `poker_updated` broadcast deliberately omits the value.
+- **Poker values** are never shown before reveal; other participants only see `voted` or `waiting`. The `poker_updated` broadcast deliberately omits the value.
+- **Ready ticks** are visible to everyone at all times.
 - Bingo dot filtering is applied by the client in `renderBingoGrid()`, using each session user's `role` and the current `revealed` flag.
 
 ## Data Flow Sequences
@@ -312,7 +360,38 @@ Server validates the value and overwrites session.poker_selections[email]
 ↓
 Server broadcasts "poker_updated" { email, has_selection: true }
 ↓
-All clients re-render the participant list ("ready" instead of "waiting")
+All clients re-render the participant list ("voted" instead of "waiting"; an explicit ☕ also counts as voted)
+```
+
+### Ready Toggle
+```
+User clicks the green "Ready" button under Your Estimate
+↓
+Client sends "ready_toggle" {}
+↓
+Server adds/removes the user's email in session.ready
+↓
+Server broadcasts "ready_updated" { ready: [emails] }
+↓
+All clients show a green ✓ next to each ready participant;
+the sender's button switches between "Ready" and "✓ Ready"
+↓
+If auto-reveal is on and every participant is now ready,
+the server reveals the round (see Reveal Round)
+```
+
+### Auto-reveal
+```
+User ticks "Auto-reveal when everyone is ready" under Reveal All
+↓
+Client sends "auto_reveal_set" { enabled: true }
+↓
+Server stores session.auto_reveal and broadcasts "auto_reveal_updated"
+↓
+All clients update the checkbox (the setting is shared by the room)
+↓
+After every ready_toggle, auto_reveal_set, and participant departure, the
+server reveals the round if auto-reveal is on and all participants are ready
 ```
 
 ### Reveal Round
@@ -328,7 +407,8 @@ Server broadcasts "revealed" with bingo_selections + poker_selections
 All clients render:
   - Bingo grid with every participant's color dots, cells frozen
   - Each participant's poker value in the participant list
-  - Average of numeric votes plus a count of "split" votes
+  - ☕ for anyone who chose it or never voted
+  - Average of numeric votes (☕ and split excluded) plus a count of "split" votes
   - Reveal button disabled, Reset button enabled
 ```
 
@@ -338,7 +418,8 @@ All clients render:
 ```
 Reveal Button: ENABLED
 Reset Button: DISABLED
-Poker values: Hidden (others see "ready" / "waiting")
+Poker values: Hidden (others see "voted" / "waiting"); default is ☕
+Ready Button: ENABLED, toggles the user's ✓
 Bingo: User can toggle cells; worker selections visible only to themselves
 ```
 
@@ -347,6 +428,7 @@ Bingo: User can toggle cells; worker selections visible only to themselves
 Reveal Button: DISABLED
 Reset Button: ENABLED
 Poker values: Visible per participant, plus average and split count
+Ready Button: DISABLED; ✓ ticks stay visible
 Bingo: Grid frozen, all selections visible with owner colors
 ```
 
@@ -354,7 +436,9 @@ Bingo: Grid frozen, all selections visible with owner colors
 ```
 Returns to "Normal Flow"
 All bingo selections cleared
-All poker selections cleared
+All poker selections cleared (everyone back on ☕)
+All ready ticks cleared
+Auto-reveal setting unchanged
 revealed flag = false
 Users remain in room
 ```
@@ -381,11 +465,14 @@ Users remain in room
 ## Performance Considerations
 
 - In-memory session state for active rooms; room configs are loaded once at startup
-- Broadcasts are scoped to the connections of a single room, not all connections
-- Bingo grid fixed at 25 cells; poker values fixed at 9 options
+- Broadcasts are scoped to the connections of a single room, not all connections, and are sent concurrently with a 5 s per-socket timeout
+- Bingo grid fixed at 25 cells; poker values fixed at 10 options
+- The client builds the 25 bingo cell elements once per grid and updates them in place, so remote updates never recreate the cell under the cursor (which would replay its hover transition)
 - Dead sockets are pruned during each broadcast
 - Session state is cleaned up when the last user leaves a room
+- Each persisted change rewrites the whole JSON file atomically; this is fine at the app's scale (a handful of rooms and users)
+- The `/logs` page reads at most the last 2 MB of a log file
 
 ---
 
-*Last Updated: 2026-08-18*
+*Last Updated: 2026-10-07*

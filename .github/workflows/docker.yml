@@ -8,10 +8,33 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ghcr.io/hamshub/bingopoker
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Run tests
+        run: pytest
+
   build-and-publish:
+    # Only publish images whose tests passed
+    needs: test
     runs-on: ubuntu-latest
 
     permissions:
@@ -29,16 +52,26 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Derived from the repository owner (lowercased, as ghcr.io requires) so no account name is hard-coded
+      - name: Read image name and build date
+        id: meta
+        run: |
+          echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/bingopoker" >> "$GITHUB_OUTPUT"
+          echo "build_date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile
           push: true
+          build-args: |
+            APP_VERSION=${{ github.sha }}
+            BUILD_DATE=${{ steps.meta.outputs.build_date }}
           tags: |
-            ghcr.io/hamshub/bingopoker:latest
-            ghcr.io/hamshub/bingopoker:${{ github.sha }}
+            ${{ steps.meta.outputs.image }}:latest
+            ${{ steps.meta.outputs.image }}:${{ github.sha }}
 
       - name: Verify image
         run: |
-          docker manifest inspect ghcr.io/hamshub/bingopoker:latest
+          docker manifest inspect ${{ steps.meta.outputs.image }}:latest

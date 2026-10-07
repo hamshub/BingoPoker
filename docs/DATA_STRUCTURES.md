@@ -2,7 +2,7 @@
 
 ## Overview
 
-BingoPoker uses two primary JSON files for persistence and several in-memory structures for active room state. Plain email addresses are never written to disk.
+BingoPoker uses two primary JSON files for persistence (plus `analytics.json` for usage statistics) and several in-memory structures for active room state. Plain email addresses are never written to disk. All JSON files are written atomically via `utils/file_io.write_json_atomic` (temp file, `fsync`, `os.replace`), so a crash mid-write never leaves a truncated file.
 
 ---
 
@@ -156,9 +156,64 @@ Persistent room configurations. Stores the bingo card setup and room metadata.
 
 ---
 
+### 3. `backend/data/analytics.json`
+
+Daily aggregate usage counters, written by `AnalyticsManager` and shown on the `/analytics` admin page.
+
+**Location**: `<DATA_DIR>/analytics.json`
+
+**Schema**:
+```json
+{
+  "days": {
+    "[YYYY-MM-DD]": {
+      "rooms_created": "int",
+      "joins": "int (WebSocket room joins)",
+      "active_users": "int (unique users that day)",
+      "peak_room_size": "int (largest room after a join)",
+      "rounds_revealed": "int (counted once per round)",
+      "auto_reveals": "int",
+      "participants_in_rounds": "int (sum of participants over revealed rounds)",
+      "votes": { "[poker value]": "int" },
+      "user_ids": ["string (current day only)"]
+    }
+  }
+}
+```
+
+**Example**:
+```json
+{
+  "days": {
+    "2026-10-06": {
+      "rooms_created": 1, "joins": 9, "active_users": 5, "peak_room_size": 5,
+      "rounds_revealed": 4, "auto_reveals": 3, "participants_in_rounds": 20,
+      "votes": { "3": 8, "5": 7, "coffee": 5 }
+    },
+    "2026-10-07": {
+      "rooms_created": 0, "joins": 2, "active_users": 2, "peak_room_size": 2,
+      "rounds_revealed": 0, "auto_reveals": 0, "participants_in_rounds": 0,
+      "votes": {},
+      "user_ids": ["9f1c2d3e4a5b6c7d8e9f0a1b2c3d4e5f", "7b2a1c0d9e8f7a6b5c4d3e2f1a0b9c8d"]
+    }
+  }
+}
+```
+
+**Privacy**:
+- No emails or usernames are stored
+- Only the current day's random user IDs are kept, to count unique users; when a new day starts, earlier days' `user_ids` lists are dropped and only the `active_users` count remains
+
+**Operations**:
+- **Write**: After a successful `POST /api/room` (`record_room_created`), on WebSocket join (`record_join`), and once per revealed round (`record_reveal`; repeated reveal clicks are not counted again)
+- Dates use the server's local time zone
+- A missing or unreadable file starts empty
+
+---
+
 ## In-Memory Structures (Runtime)
 
-### 3. Room Session State
+### 4. Room Session State
 
 Active room state stored in server memory under `RoomManager.sessions[room_id]`. Never persisted; the entry is deleted as soon as the last user leaves.
 
@@ -178,20 +233,16 @@ Active room state stored in server memory under `RoomManager.sessions[room_id]`.
     "[user_email]": [(row, col), ...]  # tuples in memory, serialized as [row, col] lists
   },
   "poker_selections": {
-    "[user_email]": "8"  # One of: "0", "1", "2", "3", "5", "8", "13", "21", "split"
+    "[user_email]": "8"  # One of: "coffee", "0", "1", "2", "3", "5", "8", "13", "21", "split"; no entry = not voted (shown as ☕)
   },
+  "ready": ["[user_email]", ...],  # Users whose Ready toggle is on
+  "auto_reveal": False,  # Room setting: reveal automatically once every user is ready; survives reset
   "revealed": False,
   "color_counter": 2  # Monotonic counter for color assignment; never decreases
 }
 ```
 
 The entries in `users` are the public user profile (`user_id`, `email`, `username`, `role`) plus the session-assigned `color`. Session maps are keyed by email, because the WebSocket connection is identified by email.
-    },
-    "revealed": false,
-    "color_counter": 2  # Monotonic counter for color assignment; never decreases
-  }
-}
-```
 
 **Example Bingo Selections**:
 ```json
@@ -207,12 +258,16 @@ Cell [2][2] is the center cell — styled differently, but with no special game 
 
 **Selection Semantics**:
 - `bingo_select` toggles a cell: it is added if absent and removed if present
-- `poker_select` overwrites the user's previous value
+- `poker_select` overwrites the user's previous value (an explicit `coffee` is stored and counts as a vote)
+- `ready_toggle` adds the user to `ready`, or removes them if already present; ready ticks are visible to everyone
+- With `auto_reveal` on, the round is revealed as soon as every user in `users` is in `ready` (checked after `ready_toggle`, `auto_reveal_set`, and a user leaving)
 - A worker's bingo cells are visible only to that worker until reveal; an observer's cells are always visible to everyone
 - Poker values stay hidden (only `has_selection` is broadcast) until reveal
-- Leaving the room removes the user's entries from both selection maps
+- Leaving the room removes the user's entries from both selection maps and from `ready`
+- Resetting the round clears both selection maps and `ready`
 
 **Poker Values**:
+- `"coffee"` - ☕ Default shown for users who haven't voted; can also be chosen explicitly (counts as voted); always excluded from the average
 - `"0"` - Zero/Not started
 - `"1"` - One
 - `"2"` - Two
@@ -227,7 +282,7 @@ Cell [2][2] is the center cell — styled differently, but with no special game 
 
 ## Color Palette
 
-### 4. Predefined Color List
+### 5. Predefined Color List
 
 10 colors for user identification, assigned in rolling order (`backend/utils/color_palette.py`).
 
@@ -255,7 +310,7 @@ Cell [2][2] is the center cell — styled differently, but with no special game 
 
 ## Client State
 
-### 5. Browser Storage
+### 6. Browser Storage
 
 User's local profile cache.
 
@@ -288,7 +343,7 @@ Records saved before user IDs existed are upgraded automatically by re-fetching 
 
 ## Message Formats
 
-### 6. WebSocket Message Structure
+### 7. WebSocket Message Structure
 
 All WebSocket messages follow this structure:
 
@@ -314,17 +369,29 @@ There is no `room_id`, `user_email`, or `timestamp` field — the room and user 
 { "type": "poker_select", "payload": { "value": "8" } }
 ```
 
-#### c. `reveal` (Client → Server)
+`value` is one of `coffee`, `0`, `1`, `2`, `3`, `5`, `8`, `13`, `21`, `split`.
+
+#### c. `ready_toggle` (Client → Server)
+```json
+{ "type": "ready_toggle", "payload": {} }
+```
+
+#### d. `auto_reveal_set` (Client → Server)
+```json
+{ "type": "auto_reveal_set", "payload": { "enabled": true } }
+```
+
+#### e. `reveal` (Client → Server)
 ```json
 { "type": "reveal", "payload": {} }
 ```
 
-#### d. `reset` (Client → Server)
+#### f. `reset` (Client → Server)
 ```json
 { "type": "reset", "payload": {} }
 ```
 
-#### e. `room_state` (Server → Joining client only)
+#### g. `room_state` (Server → Joining client only)
 ```json
 {
   "type": "room_state",
@@ -334,6 +401,8 @@ There is no `room_id`, `user_email`, or `timestamp` field — the room and user 
       "users": [{ "user_id": "9f1c...", "email": "...", "username": "...", "role": "worker", "color": "#E63946" }],
       "bingo_selections": { "alice@company.com": [[0, 2], [1, 3]] },
       "poker_selections": { "alice@company.com": "8" },
+      "ready": ["alice@company.com"],
+      "auto_reveal": false,
       "revealed": false,
       "color_counter": 1
     }
@@ -341,24 +410,34 @@ There is no `room_id`, `user_email`, or `timestamp` field — the room and user 
 }
 ```
 
-#### f. `user_joined` / `user_left` (Server → Broadcast)
+#### h. `user_joined` / `user_left` (Server → Broadcast)
 ```json
 { "type": "user_joined", "payload": { "users": [{ "user_id": "9f1c...", "email": "...", "username": "...", "role": "worker", "color": "#E63946" }] } }
 ```
 
 `user_left` carries the same full `users` list plus the departing `email`.
 
-#### g. `bingo_updated` (Server → Broadcast)
+#### i. `bingo_updated` (Server → Broadcast)
 ```json
 { "type": "bingo_updated", "payload": { "bingo_selections": { "alice@company.com": [[0, 2]] } } }
 ```
 
-#### h. `poker_updated` (Server → Broadcast)
+#### j. `poker_updated` (Server → Broadcast)
 ```json
 { "type": "poker_updated", "payload": { "email": "alice@company.com", "has_selection": true } }
 ```
 
-#### i. `revealed` (Server → Broadcast)
+#### k. `ready_updated` (Server → Broadcast)
+```json
+{ "type": "ready_updated", "payload": { "ready": ["alice@company.com"] } }
+```
+
+#### l. `auto_reveal_updated` (Server → Broadcast)
+```json
+{ "type": "auto_reveal_updated", "payload": { "enabled": true } }
+```
+
+#### m. `revealed` (Server → Broadcast)
 ```json
 {
   "type": "revealed",
@@ -369,17 +448,17 @@ There is no `room_id`, `user_email`, or `timestamp` field — the room and user 
 }
 ```
 
-#### j. `round_reset` (Server → Broadcast)
+#### n. `round_reset` (Server → Broadcast)
 ```json
 { "type": "round_reset", "payload": {} }
 ```
 
-#### k. `replaced` (Server → Displaced client)
+#### o. `replaced` (Server → Displaced client)
 ```json
 { "type": "replaced", "payload": {} }
 ```
 
-#### l. `error` (Server → Offending client)
+#### p. `error` (Server → Offending client)
 ```json
 { "type": "error", "payload": { "message": "Invalid JSON" } }
 ```
@@ -402,7 +481,7 @@ There is no `room_id`, `user_email`, or `timestamp` field — the room and user 
 
 ### Session Data
 - **Cell Coordinates**: Row and column integers in 0–4
-- **Poker Value**: One of 9 predefined values
+- **Poker Value**: One of 10 predefined values (`coffee` plus the 9 Fibonacci/split values)
 - **User Count**: No maximum per room
 
 ---
@@ -421,6 +500,9 @@ If the file doesn't exist, an empty object is created:
 {}
 ```
 
+### Default `analytics.json`
+Created on the first recorded event as `{"days": {...}}`; until then the manager starts with no days.
+
 ### `backend/data/.email_pepper`
 Created on first run when `EMAIL_HASH_PEPPER` is not set. Losing this file makes existing `email_hash` values unmatchable, effectively orphaning all accounts.
 
@@ -433,10 +515,14 @@ Created on first run when `EMAIL_HASH_PEPPER` is not set. Losing this file makes
 | `HOST` | `0.0.0.0` | Bind address |
 | `PORT` | `8081` | Listen port |
 | `DEBUG` | `False` | Enables the `/api/debug/*` data-wiping endpoints |
-| `DATA_DIR` | `backend/data` | Where `users.json`, `rooms.json`, and `.email_pepper` live; relative paths resolve against `backend/` |
+| `DATA_DIR` | `backend/data` | Where `users.json`, `rooms.json`, and `.email_pepper` live; relative paths resolve against the working directory |
+| `LOG_DIR` | `backend/logs` (sibling of `DATA_DIR`) | Where `bingopoker.log` and its rotated `bingopoker.log.YYYY-MM-DD` files live; the Docker image uses `/app/data/logs` |
 | `EMAIL_HASH_PEPPER` | auto-generated | HMAC pepper used for email hashing |
+| `ADMIN_PASSWORD` | empty | Enables the `/logs` and `/analytics` admin pages (HTTP Basic auth); disabled when empty |
+| `APP_VERSION` | `dev` | Build version (commit SHA), set at image build time; returned by `/api/version` and `/health` |
+| `BUILD_DATE` | empty | Build timestamp (UTC ISO 8601), set at image build time; returned by `/api/version` |
 
-Logs are written to `backend/logs/bingopoker.log`.
+Logs are written to `<LOG_DIR>/bingopoker.log`, rotated at midnight, with 30 files kept.
 
 ---
 
@@ -448,4 +534,4 @@ Logs are written to `backend/logs/bingopoker.log`.
 
 ---
 
-*Last Updated: 2026-08-18*
+*Last Updated: 2026-10-07*

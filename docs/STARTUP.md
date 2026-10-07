@@ -5,20 +5,18 @@
 ### Step 1: Connect via SSH
 
 ```bash
-ssh uid1124393@shellserver
-cd ~/srvtech.hu/sub/bingopoker
+ssh <user>@<host>
+cd ~/<path-to>/bingopoker
 ```
 
 ### Step 2: Verify Python & Dependencies
 
 ```bash
-# Check Python version (should be 3.8+)
+# Check Python version (should be 3.9+)
 python3 --version
 
-# Install dependencies (one time only)
-cd backend
+# Install dependencies (one time only, from the project root)
 pip3 install -r requirements.txt
-cd ..
 ```
 
 ### Step 3: Launch the App
@@ -36,7 +34,7 @@ You should see:
 Starting BingoPoker on 0.0.0.0:8081
 ```
 
-Application events are written to `backend/logs/bingopoker.log`; only warnings and errors are echoed to the console.
+Application events are written to `backend/logs/bingopoker.log` (or `LOG_DIR`), rotated at midnight with 30 files kept; only warnings and errors are echoed to the console.
 
 ### Step 4: Test the App (in another terminal)
 
@@ -57,7 +55,7 @@ The app runs in the foreground. To keep it running after disconnect, use one of:
 #### Option A: tmux (recommended)
 ```bash
 # Start a new session
-tmux new-session -d -s bingopoker "cd ~/srvtech.hu/sub/bingopoker/backend && python3 app.py"
+tmux new-session -d -s bingopoker "cd ~/<path-to>/bingopoker/backend && python3 app.py"
 
 # Check if running
 tmux list-sessions
@@ -94,31 +92,105 @@ fg
 kill %1  # Kill job 1
 ```
 
+## Docker Deployment (NAS)
+
+Every push to `main` runs `.github/workflows/docker.yml`. Its `test` job runs `pytest`; only
+if that passes does `build-and-publish` build the image and push
+`ghcr.io/<github-owner>/bingopoker:latest` (plus a `:<commit sha>` tag), where `<github-owner>` is
+the repository owner in lowercase. The build passes the commit
+SHA and build time as `APP_VERSION` / `BUILD_DATE`, which the app shows as
+"Version <sha> · <date>" at the bottom of the room list info block (and returns from
+`/api/version`).
+
+`docker-compose.yml` runs three containers:
+
+| Container | Purpose |
+| --- | --- |
+| `bingopoker` | The app, on host port `40550`; data in `/share/Container/bingopoker/data` |
+| `bingopoker-caddy` | HTTPS reverse proxy on host ports `4080`/`4443`, using `/share/Container/bingopoker/Caddyfile` |
+| `bingopoker-watchtower` | Checks ghcr.io every 5 minutes and recreates `bingopoker` when a new `latest` image is published |
+
+Watchtower only updates containers labelled `com.centurylinklabs.watchtower.enable=true`
+(currently just `bingopoker`). It pulls anonymously, so the ghcr.io package must be public.
+
+The NAS keeps its own copy of the compose file; after changing `docker-compose.yml` in the
+repo, copy it to the NAS and apply it from that directory:
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+`docker restart bingopoker` does **not** pick up a new image — the container must be
+recreated (`docker compose up -d`). Check update activity with
+`docker logs bingopoker-watchtower --tail 20`. Recreating the container (by Watchtower or by
+hand) wipes in-progress rounds, since session state is in memory only.
+
+### Logs
+
+The image sets `LOG_DIR=/app/data/logs`, so logs live in the data volume
+(`/share/Container/bingopoker/data/logs` on the NAS) and survive container updates.
+`bingopoker.log` is today's file; older days are `bingopoker.log.YYYY-MM-DD`, and 30 files are
+kept.
+
+### Admin pages (`/logs`, `/analytics`)
+
+The log viewer and usage statistics are enabled by `ADMIN_PASSWORD`. Settings live in a `.env`
+file next to `docker-compose.yml` on the NAS (never commit it). The compose file loads it with
+`env_file`, so every variable in it is passed into the `bingopoker` container:
+
+```bash
+# .env (next to docker-compose.yml) — see the Docker section of .env.example
+BINGOPOKER_IMAGE=ghcr.io/<github-owner>/bingopoker:latest
+ADMIN_PASSWORD=<password>
+```
+
+`BINGOPOKER_IMAGE` is required; `docker compose` refuses to start without it. `HOST`, `PORT`,
+`DEBUG`, `DATA_DIR` and `LOG_DIR` are fixed in `docker-compose.yml` and win over `.env`. Write a
+literal `$` in a value as `$$`, since compose treats `$` as a variable reference.
+
+Apply changes with `docker compose up -d`. Later settings changes only need a `.env` edit plus
+`docker compose up -d`; the compose file itself only needs copying again when it changes.
+
+Then open `https://<your-domain>/logs` or `https://<your-domain>/analytics` through Caddy and
+sign in with any username and that password. Only use HTTPS — Basic auth sends the password
+with every request. Watchtower keeps the environment when it recreates the container. Without
+the variable both pages return 404 and a warning is logged at startup.
+
+---
+
 ## File Structure
 
 ```
 bingopoker/
+├── requirements.txt
+├── requirements-dev.txt
+├── pytest.ini
 ├── backend/
 │   ├── app.py
-│   ├── requirements.txt
-│   ├── requirements-dev.txt
 │   ├── data/
 │   │   ├── users.json
 │   │   ├── rooms.json
+│   │   ├── analytics.json
 │   │   └── .email_pepper       # auto-generated secret — back this up
 │   ├── logs/
-│   │   └── bingopoker.log
+│   │   ├── bingopoker.log
+│   │   └── bingopoker.log.YYYY-MM-DD
 │   ├── utils/
 │   │   ├── user_manager.py
 │   │   ├── room_manager.py
+│   │   ├── analytics_manager.py
+│   │   ├── file_io.py
 │   │   ├── color_palette.py
 │   │   └── validators.py
 │   ├── routes/
 │   │   ├── users.py
 │   │   ├── rooms.py
+│   │   ├── admin.py
 │   │   └── debug.py
-│   └── handlers/
-│       └── websocket.py
+│   ├── handlers/
+│   │   └── websocket.py
+│   └── tests/
 ├── frontend/
 │   ├── index.html
 │   ├── css/styles.css
@@ -139,9 +211,14 @@ Edit `.env` in the project root (see `.env.example`):
 HOST=0.0.0.0
 PORT=8081
 DEBUG=False              # True also exposes the destructive /api/debug endpoints
-DATA_DIR=data            # relative to backend/app.py; defaults to backend/data/ if unset
+DATA_DIR=                # defaults to backend/data; a relative path resolves against the working directory
 EMAIL_HASH_PEPPER=       # leave empty to auto-generate backend/data/.email_pepper
+LOG_DIR=                 # defaults to backend/logs
+ADMIN_PASSWORD=          # set to enable /logs and /analytics (HTTPS only)
 ```
+
+`APP_VERSION` and `BUILD_DATE` are set by the Docker build; outside Docker the app reports
+"Development build".
 
 ### Email pepper
 
@@ -153,7 +230,7 @@ keep it out of version control** — losing or changing it orphans every existin
 
 **App won't start: "Module not found"**
 ```bash
-cd backend
+# from the project root
 pip3 install -r requirements.txt
 ```
 
@@ -183,8 +260,13 @@ kill <PID>
 ## Production Checklist
 
 1. `DEBUG=False` so the data-wiping `/api/debug` endpoints are not registered.
-2. Back up `backend/data/` (including `.email_pepper`).
-3. Serve behind HTTPS so WebSocket traffic upgrades to `wss://`.
-4. Rotate or truncate `backend/logs/bingopoker.log` periodically — the app does not rotate it.
+2. Back up `backend/data/` (including `.email_pepper` and `analytics.json`).
+3. Serve behind HTTPS so WebSocket traffic upgrades to `wss://` and admin credentials are encrypted.
+4. Set `ADMIN_PASSWORD` if you want the `/logs` and `/analytics` pages; leave it empty to disable them.
+5. Logs rotate daily and 30 files are kept, so no manual log cleanup is needed.
 
 For detailed development info: see [DEVELOPMENT.md](DEVELOPMENT.md)
+
+---
+
+*Last Updated: 2026-10-07*

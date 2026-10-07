@@ -23,7 +23,7 @@ class ValidationError:
     ROOM_ID_INVALID = (False, "Room ID format is invalid")
     ROOM_ID_REQUIRED = (False, "Room ID is required")
     GRID_INVALID = (False, "Grid must be 5x5 array of strings")
-    POKER_VALUE_INVALID = (False, "Poker value must be one of: 0, 1, 2, 3, 5, 8, 13, 21, split")
+    POKER_VALUE_INVALID = (False, "Poker value must be one of: coffee, 0, 1, 2, 3, 5, 8, 13, 21, split")
     POKER_VALUE_REQUIRED = (False, "Poker value is required")
 
 
@@ -35,7 +35,7 @@ class Validators:
     ROOM_ID_PATTERN = re.compile(r'^room-[a-zA-Z0-9]{8}$')
 
     # Constants
-    VALID_POKER_VALUES = {'0', '1', '2', '3', '5', '8', '13', '21', 'split'}
+    VALID_POKER_VALUES = {'coffee', '0', '1', '2', '3', '5', '8', '13', '21', 'split'}
     USERNAME_MIN_LENGTH = 1
     USERNAME_MAX_LENGTH = 50
     ROOM_NAME_MIN_LENGTH = 1

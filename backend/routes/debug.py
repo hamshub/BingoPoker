@@ -1,16 +1,15 @@
 """Temporary debug endpoints for clearing persisted data during development."""
 
-import aiofiles
-import json
 from aiohttp import web
+
+from utils.file_io import write_json_atomic
 
 
 async def delete_users_handler(request: web.Request) -> web.Response:
     user_manager = request.app["user_manager"]
     user_manager.users = {}
     user_manager._by_email_hash = {}
-    async with aiofiles.open(user_manager.users_file, "w") as f:
-        await f.write(json.dumps({}))
+    await write_json_atomic(user_manager.users_file, {})
     return web.json_response({"message": "All users deleted"})
 
 
@@ -18,8 +17,7 @@ async def delete_rooms_handler(request: web.Request) -> web.Response:
     room_manager = request.app["room_manager"]
     room_manager.rooms = {}
     room_manager.sessions = {}
-    async with aiofiles.open(room_manager.rooms_file, "w") as f:
-        await f.write(json.dumps({}))
+    await write_json_atomic(room_manager.rooms_file, {})
     return web.json_response({"message": "All rooms deleted"})
 
 

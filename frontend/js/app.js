@@ -6,10 +6,14 @@
 
 // ===== Global State =====
 
+// 'coffee' (☕) is everyone's starting estimate and is excluded from the average
+const DEFAULT_POKER_VALUE = 'coffee';
+const POKER_VALUES = [DEFAULT_POKER_VALUE, '0', '1', '2', '3', '5', '8', '13', '21', 'split'];
+
 const appState = {
     currentUser: null,
     currentRoom: null,
-    selectedPokerValue: null,
+    selectedPokerValue: DEFAULT_POKER_VALUE,
     selectedBingoCells: new Set(),  // "row-col" strings owned by this user
     rooms: [],
     currentGrid: null,
@@ -66,7 +70,18 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     setupEventListeners();
     checkAuthStatus();
+    renderBuildInfo();
 });
+
+async function renderBuildInfo() {
+    const el = document.getElementById('buildInfo');
+    if (!el) return;
+    const result = await BingoPokerAPI.getVersion();
+    if (!result.success) return;
+    const { version, build_date: buildDate } = result.data;
+    const label = version === 'dev' ? 'Development build' : `Version ${version.slice(0, 7)}`;
+    el.textContent = buildDate ? `${label} · ${buildDate.slice(0, 10)}` : label;
+}
 
 window.addEventListener('popstate', function() {
     const urlRoom = new URLSearchParams(location.search).get('r');
@@ -75,7 +90,7 @@ window.addEventListener('popstate', function() {
         if (appState.ws) { appState.ws.close(); appState.ws = null; }
         appState.currentRoom = null;
         appState.selectedBingoCells.clear();
-        appState.selectedPokerValue = null;
+        appState.selectedPokerValue = DEFAULT_POKER_VALUE;
         showScreen('roomSelectScreen');
         loadRooms();
     } else if (urlRoom && appState.currentUser) {
@@ -175,6 +190,16 @@ function setupEventListeners() {
     const resetBtn = document.getElementById('resetBtn');
     if (resetBtn) {
         resetBtn.addEventListener('click', handleReset);
+    }
+
+    const readyBtn = document.getElementById('readyBtn');
+    if (readyBtn) {
+        readyBtn.addEventListener('click', handleReadyToggle);
+    }
+
+    const autoRevealCheckbox = document.getElementById('autoRevealCheckbox');
+    if (autoRevealCheckbox) {
+        autoRevealCheckbox.addEventListener('change', handleAutoRevealToggle);
     }
 }
 
@@ -382,7 +407,7 @@ async function joinRoom(roomId) {
     appState.currentRoom = { room_id: roomId, ...result.data.room };
     appState.currentGrid = appState.currentRoom.config.config.grid;
     appState.selectedBingoCells.clear();
-    appState.selectedPokerValue = null;
+    appState.selectedPokerValue = DEFAULT_POKER_VALUE;
 
     renderGameScreen();
     showScreen('gameScreen');
@@ -397,7 +422,7 @@ async function handleLeaveRoom() {
     }
     appState.currentRoom = null;
     appState.selectedBingoCells.clear();
-    appState.selectedPokerValue = null;
+    appState.selectedPokerValue = DEFAULT_POKER_VALUE;
     history.pushState({}, '', '/');
     showScreen('roomSelectScreen');
     loadRooms();
@@ -455,6 +480,9 @@ function displayUrl(url) {
     return url.replace(/^https?:\/\/(www\.)?/, '');
 }
 
+// The grid array the bingo cell elements were last built from
+let renderedBingoGrid = null;
+
 function renderBingoGrid() {
     const grid = document.getElementById('bingoGrid');
     if (!grid || !appState.currentGrid) return;
@@ -479,26 +507,21 @@ function renderBingoGrid() {
         }
     }
 
-    grid.innerHTML = '';
+    // Reuse existing cells: recreating the hovered cell would replay its hover border transition
+    if (renderedBingoGrid !== appState.currentGrid || grid.children.length !== 25) {
+        buildBingoGrid(grid);
+    }
 
     for (let row = 0; row < 5; row++) {
         for (let col = 0; col < 5; col++) {
-            const cell = appState.currentGrid[row][col];
-            const isCenter = GridUtils.isCenterCell(row, col);
             const cellKey = `${row}-${col}`;
-            const isMySelection = appState.selectedBingoCells.has(cellKey);
+            const cellEl = grid.children[row * 5 + col];
             const usersOnCell = cellUsers[cellKey] || [];
 
-            const cellEl = document.createElement('div');
-            cellEl.className = 'bingo-cell'
-                + (isCenter ? ' center' : '')
-                + (isMySelection ? ' selected' : '')
-                + (revealed ? ' frozen' : '');
-            cellEl.style.position = 'relative';
+            cellEl.classList.toggle('selected', appState.selectedBingoCells.has(cellKey));
+            cellEl.classList.toggle('frozen', revealed);
 
-            const label = document.createElement('span');
-            label.textContent = cell;
-            cellEl.appendChild(label);
+            cellEl.querySelector('.cell-user-dots')?.remove();
 
             // Render colored dots for each user who selected this cell
             if (usersOnCell.length > 0) {
@@ -513,14 +536,31 @@ function renderBingoGrid() {
                 }
                 cellEl.appendChild(dotsEl);
             }
+        }
+    }
+}
 
-            if (!revealed) {
-                cellEl.addEventListener('click', () => toggleBingoCell(row, col));
-            }
+function buildBingoGrid(grid) {
+    grid.innerHTML = '';
+
+    for (let row = 0; row < 5; row++) {
+        for (let col = 0; col < 5; col++) {
+            const cellEl = document.createElement('div');
+            cellEl.className = 'bingo-cell' + (GridUtils.isCenterCell(row, col) ? ' center' : '');
+
+            const label = document.createElement('span');
+            label.textContent = appState.currentGrid[row][col];
+            cellEl.appendChild(label);
+
+            cellEl.addEventListener('click', () => {
+                if (!appState.currentRoom?.session?.revealed) toggleBingoCell(row, col);
+            });
 
             grid.appendChild(cellEl);
         }
     }
+
+    renderedBingoGrid = appState.currentGrid;
 }
 
 function toggleBingoCell(row, col) {
@@ -539,20 +579,38 @@ function renderPokerValues() {
     if (!container) return;
 
     const revealed = appState.currentRoom?.session?.revealed || false;
-    const pokerValues = ['0', '1', '2', '3', '5', '8', '13', '21', 'split'];
 
-    container.innerHTML = pokerValues.map(value => `
+    container.innerHTML = POKER_VALUES.map(value => `
         <button class="poker-btn${appState.selectedPokerValue === value ? ' active' : ''}${revealed ? ' frozen' : ''}"
+                ${value === DEFAULT_POKER_VALUE ? 'title="No estimate (not counted in the average)"' : ''}
                 ${revealed ? 'disabled' : `onclick="selectPokerValue('${value}')"`}>
-            ${value}
+            ${pokerLabel(value)}
         </button>
     `).join('');
+
+    renderReadyButton();
+}
+
+function pokerLabel(value) {
+    return value === DEFAULT_POKER_VALUE ? '☕' : value;
 }
 
 function selectPokerValue(value) {
     appState.selectedPokerValue = value;
     wsSend('poker_select', { value });
     renderPokerValues();
+}
+
+function renderReadyButton() {
+    const readyBtn = document.getElementById('readyBtn');
+    if (!readyBtn) return;
+
+    const revealed = appState.currentRoom?.session?.revealed || false;
+    const isReady = (appState.currentRoom?.session?.ready || []).includes(appState.currentUser?.email);
+
+    readyBtn.classList.toggle('active', isReady);
+    readyBtn.textContent = isReady ? '✓ Ready' : 'Ready';
+    readyBtn.disabled = revealed;
 }
 
 function renderRoundControls() {
@@ -569,7 +627,13 @@ function renderRoundControls() {
     resetBtn.style.opacity = !revealed ? '0.4' : '1';
     resetBtn.style.cursor = !revealed ? 'not-allowed' : 'pointer';
 
+    renderAutoReveal();
     renderRevealedStatus(revealed);
+}
+
+function renderAutoReveal() {
+    const checkbox = document.getElementById('autoRevealCheckbox');
+    if (checkbox) checkbox.checked = !!appState.currentRoom?.session?.auto_reveal;
 }
 
 function renderRevealedStatus(revealed) {
@@ -607,19 +671,25 @@ function renderUsers() {
 
     if (userCount) userCount.textContent = count;
 
+    const readyUsers = appState.currentRoom?.session?.ready || [];
+
     usersList.innerHTML = users.map(user => {
         const hasSelection = !!pokerSelections[user.email];
-        const pokerValue = revealed ? (pokerSelections[user.email] || '—') : (hasSelection ? '?' : '—');
+        // Users who never picked a value keep the default ☕ estimate
+        const pokerValue = escapeHtml(pokerLabel(pokerSelections[user.email] || DEFAULT_POKER_VALUE));
         const statusText = revealed
             ? `<strong style="color:var(--primary)">${pokerValue}</strong>`
-            : (hasSelection ? 'ready' : 'waiting');
+            : (hasSelection ? 'voted' : 'waiting');
         const roleBadge = user.role === 'observer'
             ? `<span class="role-badge">Observer</span>`
+            : '';
+        const readyTick = readyUsers.includes(user.email)
+            ? `<span class="ready-tick" title="Ready">✓</span>`
             : '';
         return `
         <div class="user-item">
             <div class="user-color" style="background-color: ${user.color}"></div>
-            <div class="user-name">${escapeHtml(user.username)}${roleBadge}</div>
+            <div class="user-name">${escapeHtml(user.username)}${readyTick}${roleBadge}</div>
             <div class="user-status">${statusText}</div>
         </div>`;
     }).join('');
@@ -687,8 +757,35 @@ function handleWsMessage(msg) {
             renderBingoGrid();
             break;
 
-        case 'poker_updated':
+        case 'poker_updated': {
+            const session = appState.currentRoom?.session;
+            if (session) {
+                const selections = session.poker_selections || (session.poker_selections = {});
+                const { email } = msg.payload;
+                if (email === appState.currentUser.email) {
+                    selections[email] = appState.selectedPokerValue;
+                } else {
+                    // The server never sends others' values before reveal
+                    selections[email] = selections[email] || '?';
+                }
+            }
             renderUsers();
+            break;
+        }
+
+        case 'ready_updated':
+            if (appState.currentRoom?.session) {
+                appState.currentRoom.session.ready = msg.payload.ready;
+            }
+            renderUsers();
+            renderReadyButton();
+            break;
+
+        case 'auto_reveal_updated':
+            if (appState.currentRoom?.session) {
+                appState.currentRoom.session.auto_reveal = msg.payload.enabled;
+            }
+            renderAutoReveal();
             break;
 
         case 'revealed':
@@ -709,10 +806,11 @@ function handleWsMessage(msg) {
 
         case 'round_reset':
             appState.selectedBingoCells.clear();
-            appState.selectedPokerValue = null;
+            appState.selectedPokerValue = DEFAULT_POKER_VALUE;
             if (appState.currentRoom.session) {
                 appState.currentRoom.session.bingo_selections = {};
                 appState.currentRoom.session.poker_selections = {};
+                appState.currentRoom.session.ready = [];
                 appState.currentRoom.session.revealed = false;
             }
             renderGameScreen();
@@ -728,6 +826,14 @@ function handleReveal() {
 
 function handleReset() {
     wsSend('reset');
+}
+
+function handleReadyToggle() {
+    wsSend('ready_toggle');
+}
+
+function handleAutoRevealToggle(e) {
+    wsSend('auto_reveal_set', { enabled: e.target.checked });
 }
 
 // ===== Grid Editor =====

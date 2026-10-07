@@ -123,6 +123,23 @@ class BingoPokerAPI {
     }
 
     /**
+     * Get the running build's version and build date
+     */
+    static async getVersion() {
+        try {
+            const response = await fetch(`${API_BASE}/version`);
+            const data = await response.json();
+            if (!response.ok) {
+                throw new Error(data.message || 'Failed to get version');
+            }
+            return { success: true, data };
+        } catch (error) {
+            console.error('Get version error:', error);
+            return { success: false, error: error.message };
+        }
+    }
+
+    /**
      * List all active rooms
      */
     static async listRooms() {

@@ -8,7 +8,7 @@ Conventions the codebase actually follows. Apply them to any new code.
 
 - **One responsibility per file.** Managers hold state and persistence, routes hold HTTP
   handling, handlers hold WebSocket handling, validators hold validation.
-- **Keep modules small.** Existing backend modules are 30–350 lines; split before a module
+- **Keep modules small.** Existing backend modules are 30–475 lines; split before a module
   becomes a grab bag.
 - **Module names reflect content** (`user_manager.py`, `color_palette.py`, `websocket.py`).
 
@@ -17,10 +17,13 @@ Current layout:
 ```
 backend/
 ├── app.py                  # App factory, config, logging, route wiring
-├── routes/                 # users.py, rooms.py, debug.py
+├── routes/                 # users.py, rooms.py, admin.py, debug.py
 ├── handlers/               # websocket.py
-├── utils/                  # user_manager.py, room_manager.py, color_palette.py, validators.py
-└── data/                   # users.json, rooms.json, .email_pepper
+├── utils/                  # user_manager.py, room_manager.py, analytics_manager.py,
+│                           # file_io.py, color_palette.py, validators.py
+├── tests/                  # conftest.py + test_*.py (pytest)
+├── data/                   # users.json, rooms.json, analytics.json, .email_pepper
+└── logs/                   # bingopoker.log (+ rotated files); default LOG_DIR
 
 frontend/
 ├── index.html              # All screens
@@ -41,8 +44,8 @@ ES modules without changing that decision explicitly.
 - **Type hints on function signatures**, including `-> None` for procedures.
 - **Docstrings** on every module, class and public function; document `Args:` and
   `Returns:` for anything non-trivial.
-- **Async/await for I/O.** All handlers are `async`, and all file reads/writes go through
-  `aiofiles`.
+- **Async/await for I/O.** All handlers are `async`; JSON reads use `aiofiles` and JSON
+  writes use `write_json_atomic` (see [Managers](#managers)).
 - Private helpers are prefixed with `_` (`_save_to_disk`, `_broadcast`, `_serialize_session`).
 
 ### Return conventions
@@ -68,10 +71,15 @@ async def update_role(self, email: str, new_role: str) -> tuple[bool, Optional[s
 ### Managers
 - One manager per resource; managers own both the in-memory cache and the JSON file.
 - Data is loaded once during `startup_handler` and managers are stored on the app
-  (`app["user_manager"]`, `app["room_manager"]`). Do not create module-level singletons.
+  (`app["user_manager"]`, `app["room_manager"]`, `app["analytics_manager"]`). Do not
+  create module-level singletons.
 - **All JSON persistence goes through the manager classes.** No other module opens
-  `users.json` or `rooms.json` (`routes/debug.py` is the one deliberate exception, and it
-  writes through the manager's own file paths).
+  `users.json`, `rooms.json` or `analytics.json` (`routes/debug.py` is the one deliberate
+  exception, and it writes through the manager's own file paths).
+- **All JSON writes go through `write_json_atomic`** (`utils/file_io.py`): it serializes
+  under a per-file lock, writes `<file>.tmp`, `fsync`s and swaps it in with `os.replace`,
+  so a crash never leaves a truncated file. Small text files use `write_text_atomic`.
+  Never write a data file in place with `open(..., "w")`.
 
 ### Route handlers
 - One handler per route, registered in a `setup_*_routes(app)` function.
@@ -85,8 +93,7 @@ async def update_role(self, email: str, new_role: str) -> tuple[bool, Optional[s
 - Use the standard `logging` module with a module-level
   `logger = logging.getLogger(__name__)`.
 - **Never use `print()`** for diagnostics. (`app.py`'s single startup banner is the only
-  intentional console write; `room_manager.load()` still has a legacy `print` that should
-  be converted when touched.)
+  intentional console write.)
 - **Never log an email address.** Log `user_id` and username instead. Access logging is
   suppressed in `app.py` for the same reason.
 - `logger.info` for lifecycle events (registration, room created/deleted, join/leave),
@@ -167,9 +174,13 @@ async def update_role(self, email: str, new_role: str) -> tuple[bool, Optional[s
   ID and stores an HMAC-SHA256 `email_hash`. `rooms.json` stores `created_by` as a user ID.
 - **Validate every input server-side**, even when the frontend already checks it.
 - Enforce length limits: username 1–50, room name 1–100, grid strictly 5×5 strings, poker
-  values restricted to `0, 1, 2, 3, 5, 8, 13, 21, split`.
+  values restricted to `coffee, 0, 1, 2, 3, 5, 8, 13, 21, split`.
 - Only non-sensitive profile data goes in `localStorage` (`bingopoker_user`).
 - Destructive debug routes must stay behind the `DEBUG` flag.
+- Admin pages stay behind `ADMIN_PASSWORD` (HTTP Basic auth, constant-time comparison,
+  served only over HTTPS). Never accept a file path from the request — serve only names
+  from a server-built list.
+- Analytics store aggregate counts only — no emails or usernames.
 - Use `wss://` automatically when the page is served over HTTPS (`connectWebSocket`
   already derives the scheme from `location.protocol`).
 
@@ -178,24 +189,29 @@ async def update_role(self, email: str, new_role: str) -> tuple[bool, Optional[s
 ## Documentation
 
 - Comments explain **why**, not what, and stay to a single line where possible.
-- Keep the markdown docs in the repository root in sync when behaviour changes.
+- Keep `README.md` and the markdown docs in `docs/` in sync when behaviour changes.
 - Python docstrings follow the `Args:` / `Returns:` form used throughout `utils/`.
 
 ---
 
 ## Testing
 
-There is no automated test suite and no test runner configuration in the repository.
-`backend/tests/` contains only an empty `__init__.py`. Until that changes, verification is
-manual: exercise registration, room creation, multi-user join, reveal and reset in the
-browser, and check `backend/logs/bingopoker.log` and the DevTools console for errors.
+- Tests live in `backend/tests/` and use `pytest` with `pytest-aiohttp` (declared in the
+  root `requirements-dev.txt`; configuration in the root `pytest.ini`). Run them from the
+  repository root with `pip install -r requirements-dev.txt` and `pytest`.
+- Build the app through the `client` fixture in `conftest.py`, which calls
+  `create_app(data_dir=..., log_dir=..., admin_password=...)` with temporary directories.
+  Tests must never read or write `backend/data` or `backend/logs`.
+- Use synthetic data only (e.g. `<name>@example.test`).
+- Name tests `test_<behaviour>` and follow Arrange-Act-Assert.
+- Add or update a test with every backend behaviour change. The CI `test` job runs
+  `pytest` on every push to `main`, and the Docker image is only published when it passes.
+- UI behaviour is still verified manually: exercise registration, room creation,
+  multi-user join, reveal and reset in the browser, and check the log file and the
+  DevTools console for errors.
 
-If tests are added, place them in `backend/tests/`, use `pytest` with
-`pytest-aiohttp` (already declared in `backend/requirements-dev.txt`), name them
-`test_<behaviour>`, and follow Arrange-Act-Assert.
-
-> This repository has no linter, formatter, pre-commit hook or CI configuration. Style
-> rules above are enforced by review, not tooling.
+> This repository has no linter, formatter or pre-commit hook. Style rules above are
+> enforced by review, not tooling; CI only runs the tests.
 
 ---
 
@@ -204,11 +220,12 @@ If tests are added, place them in `backend/tests/`, use `pytest` with
 - [ ] Follows the conventions in this document
 - [ ] Inputs validated server-side, user text escaped before DOM insertion
 - [ ] No email in logs, no plain email persisted
-- [ ] Managers own all JSON reads/writes
+- [ ] Managers own all JSON reads/writes, and writes go through `write_json_atomic`
 - [ ] Errors returned as structured JSON with an appropriate status code
+- [ ] Tests added or updated, and `pytest` passes
 - [ ] Docs updated if behaviour changed
 - [ ] Manually verified in the browser (no console errors)
 
 ---
 
-*Last Updated: 2026-08-18*
+*Last Updated: 2026-10-07*
